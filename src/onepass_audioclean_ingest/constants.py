@@ -1,0 +1,20 @@
+"""Constants and path conventions for OnePass AudioClean ingest."""
+from __future__ import annotations
+
+from pathlib import Path
+
+DEFAULT_OUTPUT_ROOT = Path("out")
+DEFAULT_AUDIO_FILENAME = "audio.wav"
+DEFAULT_META_FILENAME = "meta.json"
+DEFAULT_LOG_FILENAME = "convert.log"
+
+# Placeholder for future schema directory (e.g., meta.json schema)
+SCHEMAS_DIR = Path(__file__).parent / "schemas"
+
+# Placeholder for supported audio extensions; to be expanded in future releases
+SUPPORTED_AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg"}
+
+# Placeholder for future error code mapping
+ERROR_CODES = {
+    "OK": 0,
+}

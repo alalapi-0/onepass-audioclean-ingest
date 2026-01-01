@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "onepass-audioclean-ingest"
+version = "0.1.0"
+description = "Ingestion and metadata scaffolding for OnePass audio cleaning pipeline"
+authors = [{ name = "OnePass", email = "dev@onepass.example" }]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "typer>=0.12",
+  "PyYAML>=6.0",
+]
+license = { text = "MIT" }
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: OS Independent",
+  "License :: OSI Approved :: MIT License",
+]
+
+[project.scripts]
+onepass-ingest = "onepass_audioclean_ingest.cli:main"
+
+[tool.hatch.build]
+packages = ["src/onepass_audioclean_ingest"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra"
+testpaths = ["tests"]
