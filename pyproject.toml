@@ -24,6 +24,11 @@ classifiers = [
   "License :: OSI Approved :: MIT License",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0",
+]
+
 [project.scripts]
 onepass-ingest = "onepass_audioclean_ingest.cli:main"
 
