@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://onepass-audioclean-ingest/meta.v1.schema.json",
+  "title": "OnePass AudioClean Ingest meta.json (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "created_at",
+    "pipeline",
+    "input",
+    "params",
+    "tooling",
+    "probe",
+    "output",
+    "integrity",
+    "errors",
+    "stable_fields"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "meta.v1",
+      "description": "Schema version for the meta document"
+    },
+    "created_at": {
+      "type": "string",
+      "description": "Creation timestamp in ISO8601",
+      "format": "date-time"
+    },
+    "pipeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo", "repo_version"],
+      "properties": {
+        "repo": {"type": "string"},
+        "repo_version": {"type": ["string", "null"]}
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "size_bytes", "ext"],
+      "properties": {
+        "path": {"type": "string"},
+        "abspath": {"type": ["string", "null"]},
+        "size_bytes": {"type": "integer", "minimum": 0},
+        "mtime_epoch": {"type": ["number", "null"]},
+        "sha256": {"type": ["string", "null"]},
+        "ext": {"type": "string"}
+      }
+    },
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sample_rate", "channels", "bit_depth", "normalize", "normalize_mode", "ffmpeg_extra_args"],
+      "properties": {
+        "sample_rate": {"type": "integer"},
+        "channels": {"type": "integer"},
+        "bit_depth": {"type": "integer"},
+        "normalize": {"type": "boolean"},
+        "normalize_mode": {"type": ["string", "null"]},
+        "ffmpeg_extra_args": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "tooling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ffmpeg", "ffprobe", "python"],
+      "properties": {
+        "ffmpeg": {"$ref": "#/$defs/toolInfoOrNull"},
+        "ffprobe": {"$ref": "#/$defs/toolInfoOrNull"},
+        "python": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["python_version", "platform", "executable"],
+          "properties": {
+            "python_version": {"type": "string"},
+            "platform": {"type": "string"},
+            "executable": {"type": "string"}
+          }
+        }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input_ffprobe", "warnings"],
+      "properties": {
+        "input_ffprobe": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "duration": {"type": ["number", "null"]},
+                "sample_rate": {"type": ["integer", "null"]},
+                "channels": {"type": ["integer", "null"]},
+                "codec_name": {"type": ["string", "null"]},
+                "format_name": {"type": ["string", "null"]},
+                "bit_rate": {"type": ["integer", "null"]}
+              }
+            },
+            {"type": "null"}
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/namedMessage"}
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workdir",
+        "audio_wav",
+        "meta_json",
+        "convert_log",
+        "expected_audio",
+        "actual_audio"
+      ],
+      "properties": {
+        "workdir": {"type": "string"},
+        "audio_wav": {"type": "string"},
+        "meta_json": {"type": "string"},
+        "convert_log": {"type": "string"},
+        "expected_audio": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["codec", "sample_rate", "channels", "bit_depth"],
+          "properties": {
+            "codec": {"type": "string"},
+            "sample_rate": {"type": "integer"},
+            "channels": {"type": "integer"},
+            "bit_depth": {"type": "integer"}
+          }
+        },
+        "actual_audio": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "codec": {"type": "string"},
+                "sample_rate": {"type": "integer"},
+                "channels": {"type": "integer"},
+                "bit_depth": {"type": "integer"},
+                "duration": {"type": ["number", "null"]},
+                "size_bytes": {"type": ["integer", "null"]}
+              }
+            }
+          ]
+        }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["meta_sha256", "output_audio_sha256"],
+      "properties": {
+        "meta_sha256": {"type": ["string", "null"]},
+        "output_audio_sha256": {"type": ["string", "null"]}
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/errorObject"}
+    },
+    "stable_fields": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["core", "non_core", "notes"],
+      "properties": {
+        "core": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "non_core": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "notes": {"type": "string"}
+      }
+    }
+  },
+  "$defs": {
+    "toolInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "path", "version", "version_raw"],
+      "properties": {
+        "name": {"type": "string"},
+        "path": {"type": "string"},
+        "version": {"type": ["string", "null"]},
+        "version_raw": {"type": "string"},
+        "build": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "detection": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "toolInfoOrNull": {
+      "anyOf": [
+        {"$ref": "#/$defs/toolInfo"},
+        {"type": "null"}
+      ]
+    },
+    "errorObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {"type": "string"},
+        "message": {"type": "string"},
+        "hint": {"type": ["string", "null"]},
+        "detail": {"type": ["object", "null"]}
+      }
+    },
+    "namedMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {"type": "string"},
+        "message": {"type": "string"},
+        "detail": {"type": ["object", "null"]}
+      }
+    }
+  }
+}

@@ -12,6 +12,7 @@ requires-python = ">=3.10"
 dependencies = [
   "typer>=0.12",
   "PyYAML>=6.0",
+  "jsonschema>=4.21",
 ]
 license = { text = "MIT" }
 classifiers = [

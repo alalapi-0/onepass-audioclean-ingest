@@ -2,13 +2,18 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import sys
 from typing import Optional
 
 import typer
 
+from .config import ConfigError, load_config
+from .constants import DEFAULT_META_FILENAME
 from .deps import check_deps, determine_exit_code
 from .logging_utils import get_logger
+from .meta import IngestParams, MetaError, build_meta, write_meta
+from .probe import ffprobe_input
 
 app = typer.Typer(help="OnePass AudioClean ingest CLI")
 logger = get_logger(__name__)
@@ -92,6 +97,51 @@ def ingest(
             config,
             output_root,
         )
+
+
+@app.command()
+def meta(
+    input_path: str = typer.Argument(..., help="Path to input audio file"),
+    out: str = typer.Option(..., "--out", help="Workdir for meta.json"),
+    config: Optional[str] = typer.Option(None, help="Path to config file"),
+    json_output: bool = typer.Option(False, "--json", help="Print meta.json content"),
+) -> None:
+    """Generate meta.json without performing conversion."""
+
+    try:
+        config_data = load_config(Path(config)) if config else load_config()
+    except ConfigError as exc:
+        typer.echo(f"Failed to load config: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    params = IngestParams.from_config(config_data)
+    workdir = Path(out)
+
+    try:
+        workdir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:  # pragma: no cover - filesystem failure
+        typer.echo(f"Failed to create workdir {workdir}: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    deps_report = check_deps()
+    errors = [MetaError(code=e.get("code", "deps_error"), message=e.get("message", ""), hint=e.get("hint")) for e in deps_report.errors]
+
+    probe_result = ffprobe_input(Path(input_path))
+    errors.extend(probe_result.errors)
+
+    probe_obj = {"input_ffprobe": probe_result.input_ffprobe, "warnings": probe_result.warnings}
+    meta_obj = build_meta(Path(input_path), workdir, params, deps_report, probe_obj, errors)
+
+    meta_path = workdir / DEFAULT_META_FILENAME
+    write_meta(meta_obj, meta_path)
+
+    if json_output:
+        typer.echo(json.dumps(meta_obj, ensure_ascii=False, sort_keys=True, indent=2))
+
+    if errors:
+        typer.echo("meta.json generated with recorded errors; see errors section.", err=False)
+
+    raise typer.Exit(code=0)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
