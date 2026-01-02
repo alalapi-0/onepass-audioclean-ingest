@@ -152,6 +152,8 @@ def run_batch(input_dir: Path, out_root: Path, options: BatchOptions) -> BatchRe
 
         if options.dry_run:
             ended = datetime.utcnow()
+            # Generate output filename based on input filename
+            audio_filename = f"{path.stem}.wav"
             record = {
                 "schema_version": MANIFEST_PLAN_SCHEMA_VERSION,
                 "status": "planned",
@@ -169,7 +171,7 @@ def run_batch(input_dir: Path, out_root: Path, options: BatchOptions) -> BatchRe
                     "workdir": str(workdir),
                     "work_id": work_id,
                     "work_key": work_key,
-                    "audio_wav": str(workdir / DEFAULT_AUDIO_FILENAME),
+                    "audio_wav": str(workdir / audio_filename),
                     "meta_json": str(workdir / DEFAULT_META_FILENAME),
                     "convert_log": str(workdir / DEFAULT_LOG_FILENAME),
                 },
@@ -220,7 +222,7 @@ def run_batch(input_dir: Path, out_root: Path, options: BatchOptions) -> BatchRe
                     "workdir": str(workdir),
                     "work_id": work_id,
                     "work_key": work_key,
-                    "audio_wav": str(workdir / DEFAULT_AUDIO_FILENAME),
+                    "audio_wav": str(workdir / f"{path.stem}.wav"),
                     "meta_json": str(workdir / DEFAULT_META_FILENAME),
                     "convert_log": str(workdir / DEFAULT_LOG_FILENAME),
                 },
@@ -268,7 +270,7 @@ def run_batch(input_dir: Path, out_root: Path, options: BatchOptions) -> BatchRe
                 "workdir": str(workdir),
                 "work_id": work_id,
                 "work_key": work_key,
-                "audio_wav": str(workdir / DEFAULT_AUDIO_FILENAME),
+                "audio_wav": str(result.audio_path) if result.audio_path else str(workdir / f"{path.stem}.wav"),
                 "meta_json": str(workdir / DEFAULT_META_FILENAME),
                 "convert_log": str(workdir / DEFAULT_LOG_FILENAME),
             },

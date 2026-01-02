@@ -176,6 +176,7 @@ def build_meta(
     cmd_digest: Optional[str] = None,
     planned: bool = False,
     warnings: Optional[List[MetaError]] = None,
+    audio_wav_filename: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Assemble the meta dictionary adhering to the v1 schema."""
 
@@ -185,11 +186,14 @@ def build_meta(
 
     probe_obj = probe if probe is not None else {"input_ffprobe": None, "warnings": [], "output_ffprobe": None}
 
+    # Use provided audio filename or default to DEFAULT_AUDIO_FILENAME
+    audio_filename = audio_wav_filename if audio_wav_filename is not None else DEFAULT_AUDIO_FILENAME
+
     output_obj = {
         "workdir": str(workdir),
         "work_id": output_work_id,
         "work_key": output_work_key,
-        "audio_wav": DEFAULT_AUDIO_FILENAME,
+        "audio_wav": audio_filename,
         "meta_json": DEFAULT_META_FILENAME,
         "convert_log": DEFAULT_LOG_FILENAME,
         "expected_audio": {

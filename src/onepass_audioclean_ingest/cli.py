@@ -250,6 +250,11 @@ def meta(
     probe_result = ffprobe_input(Path(input_path))
     errors.extend(probe_result.errors)
 
+    # Generate output filename based on input filename
+    input_path_obj = Path(input_path)
+    input_stem = input_path_obj.stem  # Get filename without extension
+    audio_filename = f"{input_stem}.wav"
+
     probe_obj = {"input_ffprobe": probe_result.input_ffprobe, "warnings": probe_result.warnings, "output_ffprobe": None}
     meta_obj = build_meta(
         Path(input_path),
@@ -261,6 +266,7 @@ def meta(
         actual_audio=None,
         params_sources=params_sources,
         planned=True,
+        audio_wav_filename=audio_filename,
     )
 
     meta_path = workdir / DEFAULT_META_FILENAME

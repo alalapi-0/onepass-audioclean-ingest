@@ -75,7 +75,10 @@ def ingest_one(
     errors: List[IngestError] = []
     warnings: List[IngestError] = []
 
-    audio_out = workdir / DEFAULT_AUDIO_FILENAME
+    # Generate output filename based on input filename
+    input_stem = input_path.stem  # Get filename without extension
+    audio_filename = f"{input_stem}.wav"
+    audio_out = workdir / audio_filename
     meta_path = workdir / DEFAULT_META_FILENAME
     log_path = workdir / DEFAULT_LOG_FILENAME
 
@@ -100,6 +103,7 @@ def ingest_one(
             actual_audio=None,
             output_work_id=output_work_id,
             output_work_key=output_work_key,
+            audio_wav_filename=audio_filename,
         )
         write_meta(meta_obj, meta_path)
         ended = datetime.utcnow()
@@ -140,6 +144,7 @@ def ingest_one(
                 actual_audio=None,
                 output_work_id=output_work_id,
                 output_work_key=output_work_key,
+                audio_wav_filename=audio_filename,
             )
             write_meta(meta_obj, meta_path)
             ended = datetime.utcnow()
@@ -334,6 +339,7 @@ def ingest_one(
         params_digest=params_digest_val,
         planned=dry_run,
         warnings=meta_warnings,
+        audio_wav_filename=audio_filename,
     )
     write_meta(meta_obj, meta_path)
 
