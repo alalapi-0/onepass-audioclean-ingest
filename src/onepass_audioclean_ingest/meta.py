@@ -30,6 +30,8 @@ class IngestParams:
     normalize: bool = False
     normalize_mode: Optional[str] = None
     ffmpeg_extra_args: List[str] = field(default_factory=list)
+    audio_stream_index: Optional[int] = None
+    audio_language: Optional[str] = None
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "IngestParams":
@@ -40,6 +42,8 @@ class IngestParams:
             normalize=bool(config.get("normalize", cls.normalize)),
             normalize_mode=config.get("normalize_mode"),
             ffmpeg_extra_args=list(config.get("ffmpeg_extra_args", [])),
+            audio_stream_index=config.get("audio_stream_index"),
+            audio_language=config.get("audio_language"),
         )
 
 
@@ -119,6 +123,8 @@ def _stable_fields() -> Dict[str, Any]:
         "params.normalize",
         "params.normalize_mode",
         "params.ffmpeg_extra_args",
+        "params.audio_stream_index",
+        "params.audio_language",
         "output.workdir",
         "output.audio_wav",
         "output.meta_json",

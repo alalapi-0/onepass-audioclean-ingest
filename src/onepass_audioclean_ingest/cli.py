@@ -14,6 +14,7 @@ from .constants import DEFAULT_AUDIO_FILENAME, DEFAULT_LOG_FILENAME, DEFAULT_MET
 from .convert import convert_audio_to_wav
 from .deps import check_deps, determine_exit_code
 from .logging_utils import get_logger
+from .media import select_audio_stream
 from .meta import IngestParams, MetaError, build_meta, write_meta
 from .probe import ffprobe_input, ffprobe_output
 
@@ -92,6 +93,10 @@ def ingest(
     channels: Optional[int] = typer.Option(None, "--channels", help="Target channels"),
     bit_depth: Optional[int] = typer.Option(None, "--bit-depth", help="Bit depth (only 16 supported)"),
     normalize: Optional[bool] = typer.Option(None, "--normalize/--no-normalize", help="Enable loudness normalization"),
+    audio_stream_index: Optional[int] = typer.Option(None, "--audio-stream-index", help="Audio stream index to extract"),
+    audio_language: Optional[str] = typer.Option(
+        None, "--audio-language", help="Preferred audio language tag (e.g. eng, jpn)"
+    ),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite existing outputs"),
     json_output: bool = typer.Option(False, "--json", help="Print meta.json content"),
 ) -> None:
@@ -121,6 +126,11 @@ def ingest(
         params.normalize_mode = "loudnorm=I=-16:LRA=11:TP=-1.5"
     if not params.normalize:
         params.normalize_mode = None
+
+    if audio_stream_index is not None:
+        params.audio_stream_index = int(audio_stream_index)
+    if audio_language is not None:
+        params.audio_language = audio_language
 
     errors: list[MetaError] = []
     if params.bit_depth != 16:
@@ -161,9 +171,22 @@ def ingest(
     probe_result = ffprobe_input(input_path_obj)
     errors.extend(probe_result.errors)
 
+    selected_stream = None
+    selection_errors: list[MetaError] = []
+    selection_warnings: list[dict] = []
+    if probe_result.input_ffprobe is not None:
+        selected_stream, selection_errors, selection_warnings = select_audio_stream(
+            probe_result.input_ffprobe,
+            preferred_index=params.audio_stream_index,
+            preferred_language=params.audio_language,
+        )
+        probe_result.input_ffprobe["selected_audio_stream"] = selected_stream
+
+    errors.extend(selection_errors)
+
     probe_obj = {
         "input_ffprobe": probe_result.input_ffprobe,
-        "warnings": probe_result.warnings,
+        "warnings": probe_result.warnings + selection_warnings,
         "output_ffprobe": None,
     }
 
@@ -199,8 +222,22 @@ def ingest(
             typer.echo(json.dumps(meta_obj, ensure_ascii=False, sort_keys=True, indent=2))
         raise typer.Exit(code=INGEST_EXIT_CODES["INPUT_INVALID"])
 
+    stream_error_codes = {"no_audio_stream", "invalid_audio_stream_index", "audio_language_not_found"}
+    if any(err.code in stream_error_codes for err in errors):
+        exit_code = INGEST_EXIT_CODES["INVALID_STREAM_SELECTION"]
+        if any(err.code == "no_audio_stream" for err in errors):
+            exit_code = INGEST_EXIT_CODES["NO_SUPPORTED_STREAM"]
+        meta_obj = build_meta(input_path_obj, workdir, params, deps_report, probe_obj, errors, actual_audio)
+        write_meta(meta_obj, meta_path)
+        if json_output:
+            typer.echo(json.dumps(meta_obj, ensure_ascii=False, sort_keys=True, indent=2))
+        raise typer.Exit(code=exit_code)
+
     ffmpeg_path = deps_report.tools.get("ffmpeg").path if deps_report.tools.get("ffmpeg") else shutil.which("ffmpeg")
-    convert_result = convert_audio_to_wav(input_path_obj, audio_out, params, log_path, ffmpeg_path, overwrite)
+    selected_index = selected_stream.get("index") if isinstance(selected_stream, dict) else None
+    convert_result = convert_audio_to_wav(
+        input_path_obj, audio_out, params, log_path, ffmpeg_path, overwrite, audio_stream_index=selected_index
+    )
     convert_rc = convert_result.returncode
 
     if convert_result.returncode != 0 or not audio_out.exists():

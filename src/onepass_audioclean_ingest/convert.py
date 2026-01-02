@@ -48,6 +48,7 @@ def convert_audio_to_wav(
     log_path: Path,
     ffmpeg_path: Optional[str],
     overwrite: bool,
+    audio_stream_index: Optional[int] = None,
 ) -> ConvertResult:
     """Convert an input audio file to deterministic PCM s16le WAV.
 
@@ -58,7 +59,12 @@ def convert_audio_to_wav(
     ffmpeg_bin = ffmpeg_path or shutil.which("ffmpeg") or "ffmpeg"
     cmd: List[str] = [ffmpeg_bin, "-hide_banner"]
     cmd.append("-y" if overwrite else "-n")
-    cmd.extend(["-i", str(input_path), "-vn", "-ar", str(params.sample_rate), "-ac", str(params.channels)])
+    cmd.extend(["-i", str(input_path)])
+
+    if audio_stream_index is not None:
+        cmd.extend(["-map", f"0:{audio_stream_index}"])
+
+    cmd.extend(["-vn", "-ar", str(params.sample_rate), "-ac", str(params.channels)])
 
     filtergraph = None
     if params.normalize:

@@ -1,15 +1,15 @@
-# OnePass AudioClean Ingest (R4)
+# OnePass AudioClean Ingest (R5)
 
 ## 目标与范围
 - 提供音频清洗流水线的输入标准化与元数据生成入口骨架。
 - 仅聚焦 ingest：不做分段、不做 ASR、不做口误检测、不做剪辑，不引入任何联网或模型下载逻辑。
 - 默认离线可用，依赖仅限 Python 包与本机可用的 ffmpeg/ffprobe。
 
-## R4 范围
-- 实现单文件音频输入的 ingest：使用 ffmpeg 转为标准 `audio.wav`（PCM s16le）。
+## R5 范围
+- 支持单文件音频与视频输入：自动识别 mp4/mkv/mov 等容器，从视频中抽取最佳音轨再转为标准 `audio.wav`（PCM s16le）。
 - 生成 `convert.log`，记录 ffmpeg 命令、stdout/stderr，便于排障。
-- meta.json 填充 `output.actual_audio`（ffprobe 读取转换结果）并可选打印到 stdout。
-- CLI 覆盖常用参数：sample-rate/channels/bit-depth（仅 16）/normalize/overwrite/json。
+- meta.json 填充 `probe.input_ffprobe`（包含视频摘要、音轨列表与选中音轨）、`output.actual_audio`（ffprobe 读取转换结果）并可选打印到 stdout。
+- CLI 覆盖常用参数：sample-rate/channels/bit-depth（仅 16）/normalize/overwrite/json，新增音轨选择参数。
 - 新增错误码和退出码约定，失败时尽量写出 meta.json。
 
 ## 环境要求
@@ -51,14 +51,15 @@ onepass-ingest meta input.wav --out out/input__hash --json
 - 其它失败（如 ffprobe 缺失、输入不存在）会记录到 `meta.errors`，依然写出 meta.json 并返回 0，方便流水线继续。
 - `--json` 会把生成的 meta 内容输出到 stdout，便于调试。
 
-### ingest（R4，单文件转 WAV）
-用途：将输入音频（wav/mp3/m4a/aac/flac/ogg/opus 等常见格式）转换为标准 PCM s16le wav，生成 meta.json 与 convert.log。
+### ingest（R5，单文件转 WAV）
+用途：将输入音频或视频（wav/mp3/m4a/aac/flac/ogg/opus/mp4/mkv/mov 等常见格式）转换为标准 PCM s16le wav，生成 meta.json 与 convert.log。
 
 用法示例：
 
 ```bash
 onepass-ingest ingest input.mp3 --out out/demo_workdir
 onepass-ingest ingest input.wav --out out/demo_workdir --sample-rate 22050 --channels 1 --overwrite --json
+onepass-ingest ingest input.mp4 --out out/video_workdir --audio-stream-index 1
 ```
 
 行为与退出策略：
@@ -72,6 +73,21 @@ onepass-ingest ingest input.wav --out out/demo_workdir --sample-rate 22050 --cha
 - `--json` 会把最终 meta.json 打印到 stdout（仅 JSON 内容，不混杂日志）。
 
 normalize 说明：R4 采用固定滤镜 `loudnorm=I=-16:LRA=11:TP=-1.5`；如未开启则不加滤镜，meta.params.normalize_mode 置为 null。
+
+### 视频输入（R5）
+- 支持 mp4/mkv/mov（及其它 ffmpeg 支持的常见容器）。
+- 默认仅抽取音频轨道再转 WAV，不做分段/ASR/剪辑。
+- 若视频不存在音轨，ingest 失败，依然写出 meta.json 并记录 `no_audio_stream`。
+
+### 音轨选择策略
+- CLI 增强：
+  - `--audio-stream-index <int>`：指定 ffprobe 的音频 stream index。
+  - `--audio-language <str>`：按 language tag 优先选择（可选）。
+- 默认 auto 逻辑（固定排序，写入代码注释与本节）：
+  1. 若指定 language 且存在匹配，则在匹配集合中选择质量最优音轨。
+  2. 否则按质量排序：`channels` 降序、`sample_rate` 降序、`bit_rate` 降序；使用原始顺序打破并列。
+  3. 选中的 stream index 写入 `probe.input_ffprobe.selected_audio_stream`，并在转码时通过 `-map 0:<index>` 指定。
+  4. 未找到音轨或 index/language 无效时，记录错误并返回对应退出码（12 或 13）。
 
 ## 配置文件
 - 位置：`configs/default.yaml`
@@ -112,13 +128,19 @@ CLI 优先级高于配置文件；目前支持：`--sample-rate`、`--channels`�
 | `input` | 路径、大小、扩展名、可选 mtime/sha256 |
 | `params` | 采样率、通道、位深、normalize、额外 ffmpeg 参数 |
 | `tooling` | ffmpeg/ffprobe 探测信息，Python 运行时信息 |
-| `probe` | 通过 ffprobe 获取的媒体摘要，附 warnings |
+| `probe` | 通过 ffprobe 获取的媒体摘要，附 warnings（含音轨列表、选中音轨、是否含视频） |
 | `output` | workdir 相对路径、文件名、预期输出参数（actual_audio 在 R4 填充） |
 | `integrity` | meta/audio 的可选 sha256 摘要（R4+ 补全） |
 | `errors` | 结构化错误列表（包含 code/message/hint/detail） |
 | `stable_fields` | 列出核心与非核心字段路径及说明 |
 
 核心字段列表和规则同时写入 `meta.json.stable_fields`，在自动化校验或回归测试时使用。
+
+`probe.input_ffprobe`（R5）摘要字段：
+- `has_video`：是否探测到视频轨道。
+- `audio_streams`：音轨列表，包含 `index/codec_name/sample_rate/channels/bit_rate/channel_layout/language`。
+- `video_streams`：视频轨道列表（轻量字段：index/codec/width/height/r_frame_rate）。
+- `selected_audio_stream`：最终用于转码的音轨摘要，若未找到或指定无效则为 null。
 
 ## 开发规范
 - 日志：使用标准库 `logging`，统一入口在 `onepass_audioclean_ingest.logging_utils.get_logger`，后续补充格式与级别配置。
@@ -146,6 +168,8 @@ CLI 优先级高于配置文件；目前支持：`--sample-rate`、`--channels`�
 | 0 | 成功 |
 | 2 | 依赖缺失或不可运行（ffmpeg/ffprobe） |
 | 10 | 输入不存在或不可读取 |
+| 12 | 无可用音频流（视频无音轨） |
+| 13 | 音轨选择无效（指定的 index/language 不存在） |
 | 11 | 输出目录不可写或存在冲突且未指定 `--overwrite` |
 | 20 | ffmpeg 转换失败 |
 | 21 | 输出 ffprobe 失败（转换已完成） |
