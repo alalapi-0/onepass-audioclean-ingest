@@ -1,8 +1,10 @@
 """Metadata schema helpers for OnePass AudioClean ingest."""
 from __future__ import annotations
 
+import hashlib
 import json
-from dataclasses import asdict, dataclass, field
+import shlex
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version
 import platform
@@ -18,33 +20,7 @@ from .constants import (
     DEFAULT_META_FILENAME,
 )
 from .deps import DepsReport
-
-
-@dataclass
-class IngestParams:
-    """Normalized ingestion parameters used across meta generation."""
-
-    sample_rate: int = 16000
-    channels: int = 1
-    bit_depth: int = 16
-    normalize: bool = False
-    normalize_mode: Optional[str] = None
-    ffmpeg_extra_args: List[str] = field(default_factory=list)
-    audio_stream_index: Optional[int] = None
-    audio_language: Optional[str] = None
-
-    @classmethod
-    def from_config(cls, config: Dict[str, Any]) -> "IngestParams":
-        return cls(
-            sample_rate=int(config.get("sample_rate", cls.sample_rate)),
-            channels=int(config.get("channels", cls.channels)),
-            bit_depth=int(config.get("bit_depth", cls.bit_depth)),
-            normalize=bool(config.get("normalize", cls.normalize)),
-            normalize_mode=config.get("normalize_mode"),
-            ffmpeg_extra_args=list(config.get("ffmpeg_extra_args", [])),
-            audio_stream_index=config.get("audio_stream_index"),
-            audio_language=config.get("audio_language"),
-        )
+from .params import IngestParams
 
 
 @dataclass
@@ -122,9 +98,19 @@ def _stable_fields() -> Dict[str, Any]:
         "params.bit_depth",
         "params.normalize",
         "params.normalize_mode",
+        "params.normalize_config",
         "params.ffmpeg_extra_args",
         "params.audio_stream_index",
         "params.audio_language",
+        "params_sources.sample_rate",
+        "params_sources.channels",
+        "params_sources.bit_depth",
+        "params_sources.normalize",
+        "params_sources.normalize_mode",
+        "params_sources.normalize_config",
+        "params_sources.ffmpeg_extra_args",
+        "params_sources.audio_stream_index",
+        "params_sources.audio_language",
         "output.workdir",
         "output.work_id",
         "output.work_key",
@@ -147,14 +133,30 @@ def _stable_fields() -> Dict[str, Any]:
         "probe.output_ffprobe",
         "output.actual_audio",
         "errors",
+        "execution",
     ]
     notes = (
         "Core fields drive reproducibility (paths within workdir, params, expected_audio). "
         "Non-core fields may change across runs or machines (timestamps, absolute paths, platform). "
         "Actual audio attributes are captured to validate the conversion but are derived from ffprobe and may vary slightly across ffmpeg builds. "
-        "output.work_id/work_key track the deterministic workdir naming based on path+size in batch runs."
+        "output.work_id/work_key track the deterministic workdir naming based on path+size in batch runs. "
+        "Enabling normalize changes the waveform; reproducibility depends on using the same ffmpeg build and fixed loudnorm parameters."
     )
     return {"core": core_fields, "non_core": non_core_fields, "notes": notes}
+
+
+def _cmd_digest(cmd: Optional[List[str]], filtergraph: Optional[str]) -> Optional[str]:
+    if cmd is None:
+        return None
+    payload = {"cmd": cmd, "filtergraph": filtergraph}
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _cmd_str(cmd: Optional[List[str]]) -> Optional[str]:
+    if cmd is None:
+        return None
+    return " ".join(shlex.quote(part) for part in cmd)
 
 
 def build_meta(
@@ -167,6 +169,11 @@ def build_meta(
     actual_audio: Optional[Dict[str, Any]] = None,
     output_work_id: Optional[str] = None,
     output_work_key: Optional[str] = None,
+    params_sources: Optional[Dict[str, str]] = None,
+    execution: Optional[Dict[str, Any]] = None,
+    params_digest: Optional[str] = None,
+    cmd_digest: Optional[str] = None,
+    planned: bool = False,
 ) -> Dict[str, Any]:
     """Assemble the meta dictionary adhering to the v1 schema."""
 
@@ -191,17 +198,35 @@ def build_meta(
         },
         "actual_audio": actual_audio,
     }
+    params_dict = params.to_dict()
+    params_digest = params_digest or hashlib.sha256(
+        json.dumps(params_dict, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    execution_obj = execution or {
+        "ffmpeg_cmd": None,
+        "ffmpeg_cmd_str": None,
+        "ffmpeg_filtergraph": None,
+        "cmd_digest": _cmd_digest(None, None) if cmd_digest is None else cmd_digest,
+        "planned": planned,
+    }
+    execution_obj["cmd_digest"] = execution_obj.get("cmd_digest") or _cmd_digest(
+        execution_obj.get("ffmpeg_cmd"), execution_obj.get("ffmpeg_filtergraph")
+    )
+    execution_obj["ffmpeg_cmd_str"] = execution_obj.get("ffmpeg_cmd_str") or _cmd_str(execution_obj.get("ffmpeg_cmd"))
+    execution_obj["planned"] = planned or execution_obj.get("planned", False)
 
     meta = {
         "schema_version": schema_version,
         "created_at": datetime.utcnow().isoformat() + "Z",
         "pipeline": pipeline,
         "input": input_obj,
-        "params": asdict(params),
+        "params": params_dict,
+        "params_sources": params_sources,
         "tooling": _tooling(tooling),
         "probe": probe_obj,
         "output": output_obj,
-        "integrity": {"meta_sha256": None, "output_audio_sha256": None},
+        "execution": execution_obj,
+        "integrity": {"meta_sha256": None, "output_audio_sha256": None, "params_digest": params_digest},
         "errors": [err.to_dict() for err in errors],
         "stable_fields": _stable_fields(),
     }

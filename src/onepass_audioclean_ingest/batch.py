@@ -16,12 +16,13 @@ from .constants import (
     DEFAULT_META_FILENAME,
     INGEST_EXIT_CODES,
     MANIFEST_SCHEMA_VERSION,
+    MANIFEST_PLAN_SCHEMA_VERSION,
     SUPPORTED_MEDIA_EXTENSIONS,
 )
 from .deps import check_deps
 from .ingest_core import ingest_one
-from .meta import IngestParams
 from .logging_utils import get_logger
+from .params import IngestParams, params_digest
 from .scan import scan_inputs
 
 
@@ -31,6 +32,7 @@ logger = get_logger(__name__)
 @dataclass
 class BatchOptions:
     params: IngestParams
+    params_sources: Optional[dict] = None
     overwrite: bool = False
     recursive: bool = True
     exts: Optional[Iterable[str]] = None
@@ -72,8 +74,7 @@ def _manifest_line(record: dict) -> str:
 
 
 def _params_digest(params: IngestParams) -> str:
-    serialized = json.dumps(params.__dict__, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    return params_digest(params)
 
 
 def _error_summary(errors: Iterable[object]) -> str:
@@ -125,7 +126,7 @@ def run_batch(input_dir: Path, out_root: Path, options: BatchOptions) -> BatchRe
         if options.dry_run:
             ended = datetime.utcnow()
             record = {
-                "schema_version": MANIFEST_SCHEMA_VERSION,
+                "schema_version": MANIFEST_PLAN_SCHEMA_VERSION,
                 "status": "planned",
                 "exit_code": None,
                 "error_codes": [],
@@ -148,6 +149,7 @@ def run_batch(input_dir: Path, out_root: Path, options: BatchOptions) -> BatchRe
                 "started_at": started.isoformat() + "Z",
                 "ended_at": ended.isoformat() + "Z",
                 "duration_ms": int((ended - started).total_seconds() * 1000),
+                "params_digest": _params_digest(options.params),
             }
             manifest_handle.write(_manifest_line(record) + "\n")
             manifest_handle.flush()
@@ -158,6 +160,7 @@ def run_batch(input_dir: Path, out_root: Path, options: BatchOptions) -> BatchRe
                 path,
                 workdir,
                 params=options.params,
+                params_sources=options.params_sources,
                 overwrite=options.overwrite,
                 deps_report=deps_report,
                 output_work_id=work_id,

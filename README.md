@@ -1,16 +1,16 @@
-# OnePass AudioClean Ingest (R6)
+# OnePass AudioClean Ingest (R7)
 
 ## 目标与范围
 - 提供音频清洗流水线的输入标准化与元数据生成入口骨架。
 - 仅聚焦 ingest：不做分段、不做 ASR、不做口误检测、不做剪辑，不引入任何联网或模型下载逻辑。
 - 默认离线可用，依赖仅限 Python 包与本机可用的 ffmpeg/ffprobe。
 
-## R6 范围
-- 保留单文件 ingest 能力，并新增目录批处理入口，支持递归扫描、扩展名白名单与可选 dry-run。
-- 批处理输出根目录下写入 `manifest.jsonl`，逐行记录成功/失败/计划状态，含 workdir、输出路径、时间戳与错误摘要。
-- 固化 workdir 命名规则（安全化 stem + 稳定哈希），避免重名覆盖并兼顾可复现性。
-- 新增 `--continue-on-error/--fail-fast` 控制批处理失败策略，默认不中断，遇失败整体退出码为 1。
-- 默认扩展名白名单覆盖常见音频+视频（mp3/m4a/wav/flac/ogg/opus/aac/mp4/mkv/mov），可通过 `--ext` 覆盖。
+## R7 范围
+- 保留单文件 ingest 与目录批处理，并落地 normalize 功能：默认关闭，开启后使用固定的单遍 `loudnorm` 滤镜，记录 filtergraph 与参数。
+- 参数来源可追溯：meta.json 写入 `params_sources`，指明每个关键参数来自 default/config/cli；`params.normalize_config` 固定记录滤镜配置。
+- dry-run 统一：单文件模式生成 meta.json（planned 状态，`execution.planned=true`），不写 audio.wav/convert.log；目录模式写 `manifest.plan.jsonl`，只输出计划。
+- meta.json 可复现性增强：新增 `execution`（ffmpeg_cmd、ffmpeg_cmd_str、ffmpeg_filtergraph、cmd_digest、planned）与 `integrity.params_digest`。
+- manifest 计划文件：dry-run 目录模式写入 `manifest.plan.jsonl`（schema_version=`manifest.plan.v1`），每行 status=planned 并包含 workdir 规划。
 
 ## 环境要求
 - Python >= 3.10。
@@ -77,7 +77,11 @@ onepass-ingest ingest data/raw --out-root out/batch --dry-run
 - 转换失败记录 stderr 到 meta.errors 和 convert.log，退出码 20；输出 ffprobe 失败但文件已生成时退出码 21。
 - `--continue-on-error/--fail-fast`：默认 continue，遇失败仍写 manifest 并处理后续；fail-fast 时第一条失败后立即停止，退出码 1。
 - `--json` 仅适用于单文件模式，打印 meta.json 内容到 stdout（仅 JSON）。
-- normalize：沿用固定滤镜 `loudnorm=I=-16:LRA=11:TP=-1.5`；如未开启则不加滤镜，meta.params.normalize_mode 置为 null。
+- normalize：默认关闭，开启后使用固定单遍滤镜 `loudnorm=I=-16:LRA=11:TP=-1.5:linear=true:print_format=summary`，模式名 `loudnorm_r7_v1`，配置写入 `meta.params.normalize_config`。启用后会改变波形，可复现性依赖相同的 ffmpeg 版本与滤镜参数。
+
+#### Dry-run 行为（R7）
+- 单文件：`--dry-run` 时仅写 meta.json（status=planned），不生成 audio.wav/convert.log，`meta.output.actual_audio=null`，`meta.execution.planned=true` 仍记录计划中的 ffmpeg 命令与 filtergraph。
+- 目录模式：`--dry-run` 时不创建各 workdir，不写 meta.json，`--out-root` 下写入 `manifest.plan.jsonl`（schema_version=`manifest.plan.v1`，status=planned），列出 workdir 规划与路径。
 
 ### 视频输入（R5）
 - 支持 mp4/mkv/mov（及其它 ffmpeg 支持的常见容器）。
@@ -108,6 +112,7 @@ onepass-ingest ingest data/raw --out-root out/batch --dry-run
 优先级：CLI 显式参数 > `--config` 配置文件 > `configs/default.yaml` > 内置默认。
 - 目录模式下 workdir 命名不受配置影响，始终按固定规则计算。
 - 覆盖项：`--sample-rate`、`--channels`、`--bit-depth`（仅 16）、`--normalize/--no-normalize`、`--audio-stream-index`、`--audio-language` 等均可覆盖配置。
+- 元信息追踪：最终合并的每个参数来源写入 `meta.params_sources`（枚举 default/config/cli），便于复现与审计；normalize 的固定配置保存在 `meta.params.normalize_config`。
 
 ## 输出目录约定（workdir）
 - 默认输出根目录：`./out`（目录模式需要显式 `--out-root`）。
@@ -138,14 +143,22 @@ onepass-ingest ingest data/raw --out-root out/batch --dry-run
 | `pipeline.repo` / `repo_version` | 仓库标识与版本（版本可能为空） |
 | `input` | 路径、大小、扩展名、可选 mtime/sha256 |
 | `params` | 采样率、通道、位深、normalize、额外 ffmpeg 参数 |
+| `params_sources` | 记录每个参数的来源：`default` / `config` / `cli` |
 | `tooling` | ffmpeg/ffprobe 探测信息，Python 运行时信息 |
 | `probe` | 通过 ffprobe 获取的媒体摘要，附 warnings（含音轨列表、选中音轨、是否含视频） |
 | `output` | workdir 相对路径、文件名、预期输出参数（actual_audio 在 R4 填充） |
-| `integrity` | meta/audio 的可选 sha256 摘要（R4+ 补全） |
+| `execution` | ffmpeg 命令记录：结构化命令数组、可复制命令行、filtergraph（如有）、cmd_digest、planned 标记 |
+| `integrity` | meta/audio 的可选 sha256 摘要（R4+ 补全），并包含 `params_digest` 便于对比参数一致性 |
 | `errors` | 结构化错误列表（包含 code/message/hint/detail） |
 | `stable_fields` | 列出核心与非核心字段路径及说明 |
 
 核心字段列表和规则同时写入 `meta.json.stable_fields`，在自动化校验或回归测试时使用。
+
+命令记录与摘要：
+- `execution.ffmpeg_cmd` / `ffmpeg_cmd_str`：结构化与可直接复制的 ffmpeg 命令，dry-run 也会生成计划命令。
+- `execution.ffmpeg_filtergraph`：若启用 normalize 则记录固定 loudnorm filtergraph，否则为 null。
+- `execution.cmd_digest`：对命令列表与 filtergraph 的 sha256 摘要，便于比对复现。
+- `integrity.params_digest`：对合并后的参数（含 normalize_config 与 ffmpeg_extra_args）的 sha256 摘要。
 
 `probe.input_ffprobe`（R5）摘要字段：
 - `has_video`：是否探测到视频轨道。
@@ -153,9 +166,9 @@ onepass-ingest ingest data/raw --out-root out/batch --dry-run
 - `video_streams`：视频轨道列表（轻量字段：index/codec/width/height/r_frame_rate）。
 - `selected_audio_stream`：最终用于转码的音轨摘要，若未找到或指定无效则为 null。
 
-## manifest.jsonl（R6）
-- 目录模式下，`--out-root` 下生成 `manifest.jsonl`（dry-run 写入 `manifest.plan.jsonl`）。
-- 每行一条 JSON，不包裹数组，UTF-8 换行分隔，schema_version 固定为 `manifest.v1`。
+## manifest.jsonl（R7）
+- 目录模式下，`--out-root` 下生成 `manifest.jsonl`；dry-run 模式写入 `manifest.plan.jsonl`（schema_version=`manifest.plan.v1`，status 固定为 planned，不落盘 workdir）。
+- 每行一条 JSON，不包裹数组，UTF-8 换行分隔，schema_version 固定为 `manifest.v1` 或 `manifest.plan.v1`。
 - 关键字段：
   - `input`: `{path, relpath, ext, size_bytes}`
   - `output`: `{workdir, audio_wav, meta_json, convert_log}`
@@ -166,6 +179,7 @@ onepass-ingest ingest data/raw --out-root out/batch --dry-run
 - 样例：
   - `{"schema_version":"manifest.v1","input":{"relpath":"a.mp3",...},"output":{"workdir":"out/batch/a__1ab2c3d4e5f6",...},"status":"success","exit_code":0,...}`
   - `{"schema_version":"manifest.v1","input":{"relpath":"bad.mp3",...},"status":"failed","exit_code":20,"error_codes":["convert_failed"],...}`
+  - `{"schema_version":"manifest.plan.v1","input":{"relpath":"a.wav",...},"status":"planned","exit_code":null,...}`
 
 ## 开发规范
 - 日志：使用标准库 `logging`，统一入口在 `onepass_audioclean_ingest.logging_utils.get_logger`，后续补充格式与级别配置。
@@ -213,7 +227,10 @@ pip install -e .
 onepass-ingest --help
 onepass-ingest check-deps --json
 onepass-ingest meta <some_input> --out out/test_workdir
-onepass-ingest ingest <some_input> --out out/single_demo
+onepass-ingest ingest <some_input> --out out/norm_off --no-normalize
+onepass-ingest ingest <some_input> --out out/norm_on --normalize
+onepass-ingest ingest <some_input> --out out/dry_single --dry-run
+onepass-ingest ingest <input_dir> --out-root out/dry_batch --dry-run
 onepass-ingest ingest <input_dir> --out-root out/batch_demo
 pytest -q
 ```
