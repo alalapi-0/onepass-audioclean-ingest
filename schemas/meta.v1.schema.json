@@ -10,9 +10,11 @@
     "pipeline",
     "input",
     "params",
+    "params_sources",
     "tooling",
     "probe",
     "output",
+    "execution",
     "integrity",
     "errors",
     "stable_fields"
@@ -58,6 +60,7 @@
         "bit_depth",
         "normalize",
         "normalize_mode",
+        "normalize_config",
         "ffmpeg_extra_args",
         "audio_stream_index",
         "audio_language"
@@ -68,12 +71,39 @@
         "bit_depth": {"type": "integer"},
         "normalize": {"type": "boolean"},
         "normalize_mode": {"type": ["string", "null"]},
+        "normalize_config": {"type": ["object", "null"]},
         "ffmpeg_extra_args": {
           "type": "array",
           "items": {"type": "string"}
         },
         "audio_stream_index": {"type": ["integer", "null"]},
         "audio_language": {"type": ["string", "null"]}
+      }
+    },
+    "params_sources": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "sample_rate",
+        "channels",
+        "bit_depth",
+        "normalize",
+        "normalize_mode",
+        "normalize_config",
+        "ffmpeg_extra_args",
+        "audio_stream_index",
+        "audio_language"
+      ],
+      "properties": {
+        "sample_rate": {"enum": ["default", "config", "cli"]},
+        "channels": {"enum": ["default", "config", "cli"]},
+        "bit_depth": {"enum": ["default", "config", "cli"]},
+        "normalize": {"enum": ["default", "config", "cli"]},
+        "normalize_mode": {"enum": ["default", "config", "cli"]},
+        "normalize_config": {"enum": ["default", "config", "cli"]},
+        "ffmpeg_extra_args": {"enum": ["default", "config", "cli"]},
+        "audio_stream_index": {"enum": ["default", "config", "cli"]},
+        "audio_language": {"enum": ["default", "config", "cli"]}
       }
     },
     "tooling": {
@@ -207,13 +237,31 @@
         }
       }
     },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ffmpeg_cmd", "ffmpeg_cmd_str", "ffmpeg_filtergraph", "cmd_digest", "planned"],
+      "properties": {
+        "ffmpeg_cmd": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "array", "items": {"type": "string"}}
+          ]
+        },
+        "ffmpeg_cmd_str": {"type": ["string", "null"]},
+        "ffmpeg_filtergraph": {"type": ["string", "null"]},
+        "cmd_digest": {"type": ["string", "null"]},
+        "planned": {"type": "boolean"}
+      }
+    },
     "integrity": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["meta_sha256", "output_audio_sha256"],
+      "required": ["meta_sha256", "output_audio_sha256", "params_digest"],
       "properties": {
         "meta_sha256": {"type": ["string", "null"]},
-        "output_audio_sha256": {"type": ["string", "null"]}
+        "output_audio_sha256": {"type": ["string", "null"]},
+        "params_digest": {"type": ["string", "null"]}
       }
     },
     "errors": {

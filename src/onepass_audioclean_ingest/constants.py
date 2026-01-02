@@ -8,6 +8,7 @@ DEFAULT_AUDIO_FILENAME = "audio.wav"
 DEFAULT_META_FILENAME = "meta.json"
 DEFAULT_LOG_FILENAME = "convert.log"
 DEFAULT_MANIFEST_NAME = "manifest.jsonl"
+MANIFEST_PLAN_SCHEMA_VERSION = "manifest.plan.v1"
 
 # Placeholder for future schema directory (e.g., meta.json schema)
 SCHEMAS_DIR = Path(__file__).parent / "schemas"

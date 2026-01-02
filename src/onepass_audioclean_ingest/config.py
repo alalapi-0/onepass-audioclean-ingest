@@ -1,6 +1,8 @@
 """Configuration loading utilities for OnePass AudioClean ingest."""
 from __future__ import annotations
 
+"""Configuration loading utilities for OnePass AudioClean ingest."""
+
 from pathlib import Path
 from typing import Any, Dict
 
@@ -61,12 +63,12 @@ def load_config(config_path: Path | None = None) -> Dict[str, Any]:
     if path == DEFAULT_CONFIG_PATH:
         return base
 
-    override = _load_custom_config(path)
+    override = load_custom_config(path)
     merged = {**base, **(override or {})}
     return merged
 
 
-def _load_custom_config(path: Path) -> Dict[str, Any]:
+def load_custom_config(path: Path) -> Dict[str, Any]:
     """Load configuration from a custom path (YAML only for R1)."""
 
     try:

@@ -14,10 +14,11 @@ from .constants import (
     DEFAULT_META_FILENAME,
     INGEST_EXIT_CODES,
 )
-from .convert import ConvertResult, convert_audio_to_wav
+from .convert import ConvertResult, build_ffmpeg_command, convert_audio_to_wav
 from .deps import DepsReport, check_deps, determine_exit_code
 from .media import select_audio_stream
-from .meta import IngestParams, MetaError, build_meta, write_meta
+from .meta import MetaError, build_meta, write_meta
+from .params import IngestParams, params_digest
 from .probe import ffprobe_input, ffprobe_output
 
 
@@ -63,6 +64,8 @@ def ingest_one(
     deps_report: Optional[DepsReport] = None,
     output_work_id: Optional[str] = None,
     output_work_key: Optional[str] = None,
+    params_sources: Optional[dict] = None,
+    dry_run: bool = False,
 ) -> IngestResult:
     """Run ingest for a single input and always emit ``meta.json``."""
 
@@ -185,6 +188,8 @@ def ingest_one(
     exit_code: int = INGEST_EXIT_CODES["SUCCESS"]
     convert_result: Optional[ConvertResult] = None
     actual_audio = None
+    ffmpeg_cmd: Optional[List[str]] = None
+    ffmpeg_filtergraph: Optional[str] = None
 
     deps_exit = determine_exit_code(deps_report)
     if deps_exit != 0:
@@ -211,33 +216,49 @@ def ingest_one(
                 deps_report.tools.get("ffmpeg").path if deps_report.tools.get("ffmpeg") else shutil.which("ffmpeg")
             )
             selected_index = selected_stream.get("index") if isinstance(selected_stream, dict) else None
-            convert_result = convert_audio_to_wav(
+            ffmpeg_cmd, ffmpeg_filtergraph = build_ffmpeg_command(
                 input_path,
                 audio_out,
                 params,
-                log_path,
                 ffmpeg_path,
                 overwrite,
                 audio_stream_index=selected_index,
             )
-            if convert_result.returncode != 0 or not audio_out.exists():
-                errors.append(
-                    MetaError(
-                        code="convert_failed",
-                        message=f"ffmpeg conversion failed (code={convert_result.returncode})",
-                        detail={"stderr": convert_result.stderr},
-                    )
+            if not dry_run:
+                convert_result = convert_audio_to_wav(
+                    input_path,
+                    audio_out,
+                    params,
+                    log_path,
+                    ffmpeg_path,
+                    overwrite,
+                    audio_stream_index=selected_index,
                 )
-                exit_code = INGEST_EXIT_CODES["CONVERT_FAILED"]
-            else:
-                output_probe, output_probe_errors = ffprobe_output(audio_out)
-                errors.extend(output_probe_errors)
-                actual_audio = output_probe
-                probe_obj["output_ffprobe"] = output_probe
-                if actual_audio is not None and actual_audio.get("bit_depth") is None:
-                    actual_audio["bit_depth"] = params.bit_depth
-                if output_probe_errors:
-                    exit_code = INGEST_EXIT_CODES["PROBE_FAILED"]
+                if convert_result.returncode != 0 or not audio_out.exists():
+                    errors.append(
+                        MetaError(
+                            code="convert_failed",
+                            message=f"ffmpeg conversion failed (code={convert_result.returncode})",
+                            detail={"stderr": convert_result.stderr},
+                        )
+                    )
+                    exit_code = INGEST_EXIT_CODES["CONVERT_FAILED"]
+                else:
+                    output_probe, output_probe_errors = ffprobe_output(audio_out)
+                    errors.extend(output_probe_errors)
+                    actual_audio = output_probe
+                    probe_obj["output_ffprobe"] = output_probe
+                    if actual_audio is not None and actual_audio.get("bit_depth") is None:
+                        actual_audio["bit_depth"] = params.bit_depth
+                    if output_probe_errors:
+                        exit_code = INGEST_EXIT_CODES["PROBE_FAILED"]
+
+    params_digest_val = params_digest(params)
+    execution_obj = {
+        "ffmpeg_cmd": ffmpeg_cmd,
+        "ffmpeg_filtergraph": ffmpeg_filtergraph,
+        "planned": dry_run,
+    }
 
     meta_obj = build_meta(
         input_path,
@@ -249,12 +270,20 @@ def ingest_one(
         actual_audio,
         output_work_id=output_work_id,
         output_work_key=output_work_key,
+        params_sources=params_sources,
+        execution=execution_obj,
+        params_digest=params_digest_val,
+        planned=dry_run,
     )
     write_meta(meta_obj, meta_path)
 
     ended_at = datetime.utcnow()
-    status = "success" if exit_code == INGEST_EXIT_CODES["SUCCESS"] else "failed"
-    message = "ok" if status == "success" else (errors[-1].message if errors else "failed")
+    if dry_run and exit_code == INGEST_EXIT_CODES["SUCCESS"]:
+        status = "planned"
+        message = "planned"
+    else:
+        status = "success" if exit_code == INGEST_EXIT_CODES["SUCCESS"] else "failed"
+        message = "ok" if status == "success" else (errors[-1].message if errors else "failed")
 
     return IngestResult(
         input_path=input_path,

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://onepass-audioclean-ingest/manifest.plan.v1.schema.json",
+  "title": "OnePass AudioClean Ingest planned manifest (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "input",
+    "output",
+    "started_at",
+    "ended_at",
+    "duration_ms",
+    "params_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "manifest.plan.v1"},
+    "status": {"const": "planned"},
+    "exit_code": {"type": ["integer", "null"]},
+    "error_codes": {"type": "array", "items": {"type": "string"}},
+    "message": {"type": "string"},
+    "errors_summary": {"type": "string"},
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "relpath", "ext", "size_bytes"],
+      "properties": {
+        "path": {"type": "string"},
+        "relpath": {"type": "string"},
+        "ext": {"type": "string"},
+        "size_bytes": {"type": "integer"}
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workdir", "work_id", "work_key", "audio_wav", "meta_json", "convert_log"],
+      "properties": {
+        "workdir": {"type": "string"},
+        "work_id": {"type": "string"},
+        "work_key": {"type": "string"},
+        "audio_wav": {"type": "string"},
+        "meta_json": {"type": "string"},
+        "convert_log": {"type": "string"}
+      }
+    },
+    "started_at": {"type": "string"},
+    "ended_at": {"type": "string"},
+    "duration_ms": {"type": "integer"},
+    "params_digest": {"type": "string"}
+  }
+}

@@ -9,12 +9,14 @@ from typing import Optional, Set
 import typer
 
 from .batch import BatchOptions, run_batch, compute_work_id
-from .config import ConfigError, load_config
-from .constants import DEFAULT_MANIFEST_NAME, INGEST_EXIT_CODES, SUPPORTED_MEDIA_EXTENSIONS
+from .config import ConfigError
+from .constants import DEFAULT_MANIFEST_NAME, DEFAULT_META_FILENAME, INGEST_EXIT_CODES, SUPPORTED_MEDIA_EXTENSIONS
 from .deps import check_deps, determine_exit_code
 from .ingest_core import ingest_one
 from .logging_utils import get_logger
-from .meta import IngestParams
+from .params import IngestParams, load_config_params, load_default_params, merge_params
+from .meta import MetaError, build_meta, write_meta
+from .probe import ffprobe_input
 
 app = typer.Typer(help="OnePass AudioClean ingest CLI")
 logger = get_logger(__name__)
@@ -114,28 +116,27 @@ def ingest(
     is_dir_mode = input_path_obj.is_dir() or out_root is not None
 
     try:
-        config_data = load_config(Path(config)) if config else load_config()
+        default_params, _default_sources = load_default_params()
+        config_params = load_config_params(Path(config)) if config else None
     except ConfigError as exc:
         typer.echo(f"Failed to load config: {exc}", err=True)
         raise typer.Exit(code=INGEST_EXIT_CODES["INVALID_PARAMS"])
 
-    params = IngestParams.from_config(config_data)
+    cli_overrides: dict[str, Optional[str | int | bool]] = {}
     if sample_rate is not None:
-        params.sample_rate = int(sample_rate)
+        cli_overrides["sample_rate"] = int(sample_rate)
     if channels is not None:
-        params.channels = int(channels)
+        cli_overrides["channels"] = int(channels)
     if bit_depth is not None:
-        params.bit_depth = int(bit_depth)
+        cli_overrides["bit_depth"] = int(bit_depth)
     if normalize is not None:
-        params.normalize = bool(normalize)
-    if params.normalize and not params.normalize_mode:
-        params.normalize_mode = "loudnorm=I=-16:LRA=11:TP=-1.5"
-    if not params.normalize:
-        params.normalize_mode = None
+        cli_overrides["normalize"] = bool(normalize)
     if audio_stream_index is not None:
-        params.audio_stream_index = int(audio_stream_index)
+        cli_overrides["audio_stream_index"] = int(audio_stream_index)
     if audio_language is not None:
-        params.audio_language = audio_language
+        cli_overrides["audio_language"] = audio_language
+
+    params, params_sources = merge_params(default_params, config_params, cli_overrides)
 
     def _parse_ext(value: Optional[str]) -> Set[str]:
         if value is None:
@@ -156,6 +157,7 @@ def ingest(
 
         options = BatchOptions(
             params=params,
+            params_sources=params_sources,
             overwrite=overwrite,
             recursive=recursive,
             exts=_parse_ext(ext),
@@ -182,8 +184,10 @@ def ingest(
         workdir,
         params,
         overwrite,
+        params_sources=params_sources,
         output_work_id=work_id,
         output_work_key=work_key,
+        dry_run=dry_run,
     )
 
     if json_output:
@@ -206,12 +210,12 @@ def meta(
     """Generate meta.json without performing conversion."""
 
     try:
-        config_data = load_config(Path(config)) if config else load_config()
+        default_params, _default_sources = load_default_params()
+        config_params = load_config_params(Path(config)) if config else None
+        params, params_sources = merge_params(default_params, config_params, {})
     except ConfigError as exc:
         typer.echo(f"Failed to load config: {exc}", err=True)
         raise typer.Exit(code=1)
-
-    params = IngestParams.from_config(config_data)
     workdir = Path(out)
 
     try:
@@ -227,7 +231,17 @@ def meta(
     errors.extend(probe_result.errors)
 
     probe_obj = {"input_ffprobe": probe_result.input_ffprobe, "warnings": probe_result.warnings, "output_ffprobe": None}
-    meta_obj = build_meta(Path(input_path), workdir, params, deps_report, probe_obj, errors, actual_audio=None)
+    meta_obj = build_meta(
+        Path(input_path),
+        workdir,
+        params,
+        deps_report,
+        probe_obj,
+        errors,
+        actual_audio=None,
+        params_sources=params_sources,
+        planned=True,
+    )
 
     meta_path = workdir / DEFAULT_META_FILENAME
     write_meta(meta_obj, meta_path)
