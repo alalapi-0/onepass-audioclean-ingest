@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://onepass-audioclean-ingest/manifest.v1.schema.json",
+  "title": "OnePass AudioClean Ingest manifest.jsonl (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "input",
+    "output",
+    "exit_code",
+    "started_at",
+    "ended_at",
+    "duration_ms"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "manifest.v1",
+      "description": "Schema version for the manifest document"
+    },
+    "status": {
+      "enum": ["success", "failed", "planned"],
+      "description": "Processing status"
+    },
+    "exit_code": {
+      "type": ["integer", "null"],
+      "description": "Exit code from processing"
+    },
+    "error_codes": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "List of error codes"
+    },
+    "error_messages": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "List of error messages (truncated to 200 chars)"
+    },
+    "warning_codes": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "List of warning codes"
+    },
+    "warning_messages": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "List of warning messages (truncated to 200 chars)"
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable status message"
+    },
+    "errors_summary": {
+      "type": "string",
+      "description": "Semicolon-separated summary of all errors"
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "relpath", "ext", "size_bytes"],
+      "properties": {
+        "path": {"type": "string"},
+        "relpath": {"type": "string"},
+        "ext": {"type": "string"},
+        "size_bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workdir", "audio_wav", "meta_json", "convert_log"],
+      "properties": {
+        "workdir": {"type": "string"},
+        "work_id": {"type": ["string", "null"]},
+        "work_key": {"type": ["string", "null"]},
+        "audio_wav": {"type": "string"},
+        "meta_json": {"type": "string"},
+        "convert_log": {"type": "string"}
+      }
+    },
+    "meta_json_path": {
+      "type": ["string", "null"],
+      "description": "Absolute path to meta.json if it exists"
+    },
+    "log_file": {
+      "type": ["string", "null"],
+      "description": "Path to global log file"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Processing start time (ISO8601)"
+    },
+    "ended_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Processing end time (ISO8601)"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Processing duration in milliseconds"
+    },
+    "params_digest": {
+      "type": "string",
+      "description": "SHA256 digest of parameters for reproducibility"
+    }
+  }
+}
+

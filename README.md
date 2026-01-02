@@ -1,11 +1,19 @@
-# OnePass AudioClean Ingest (R8)
+# OnePass AudioClean Ingest (R9)
 
 ## 目标与范围
 - 提供音频清洗流水线的输入标准化与元数据生成入口骨架。
 - 仅聚焦 ingest：不做分段、不做 ASR、不做口误检测、不做剪辑，不引入任何联网或模型下载逻辑。
 - 默认离线可用，依赖仅限 Python 包与本机可用的 ffmpeg/ffprobe。
 
-## R8 范围
+## R9 范围
+- 测试体系完善：新增 `tests/conftest.py` 提供统一的测试工具函数（音频/视频生成、ffprobe 读取等），所有测试自动检测并跳过缺失 ffmpeg/ffprobe 的情况。
+- Schema 校验测试：新增 `test_schema_meta_valid.py` 和 `test_schema_manifest_lines_valid.py`，验证 meta.json 和 manifest.jsonl 的结构与必需字段。
+- 可复现性测试：新增 `test_dry_run_manifest_order_stable.py` 和 `test_workdir_id_stable_for_same_relpath_and_size.py`，确保批处理输出顺序稳定、workdir 命名稳定。
+- 边界测试：新增 `test_video_ingest_records_selected_stream.py` 和 `test_error_codes_are_strings_and_known.py`，覆盖视频处理与错误码校验。
+- 开发者体验：新增 `Makefile` 提供常用命令（test/check），新增 `scripts/dev_smoke.py` 用于快速验证安装。
+- Schema 文件：新增 `schemas/manifest.v1.schema.json` 用于 manifest.jsonl 校验。
+
+## R8 范围（历史）
 - 统一错误模型：新增 `errors.py` 模块，定义统一的错误码常量（ErrorCode）和退出码（ExitCode），全仓库使用同一套错误处理体系。
 - 统一日志体系：支持 `--verbose`（提升到 DEBUG 级别）和 `--log-file`（输出全局日志文件），批处理默认写入 `<out-root>/ingest.log`。
 - 批处理鲁棒性增强：`--continue-on-error` 默认开启，失败不影响后续文件；`--fail-fast` 遇到失败立即终止；退出码规则明确（0=全部成功，1=存在失败，2=deps_missing）。
@@ -234,6 +242,89 @@ onepass-ingest ingest data/raw --out-root out/batch --verbose
 - 错误码：统一使用 `errors.ErrorCode` 和 `errors.ExitCode`，全仓库保持一致。
 - Schema：meta.json v1 的 schema 固化在 `schemas/meta.v1.schema.json`，CLI 可使用该文件进行验证或回归测试。
 
+## 开发与测试（R9）
+
+### 环境准备
+
+安装 ffmpeg/ffprobe：
+- macOS: `brew install ffmpeg`
+- Ubuntu/Debian: `sudo apt-get install ffmpeg`
+- Windows: 从 [ffmpeg.org](https://ffmpeg.org/download.html) 下载并添加到 PATH
+
+### 运行测试
+
+使用 pytest 运行测试套件：
+
+```bash
+# 运行所有测试
+pytest -q
+
+# 运行特定测试文件
+pytest tests/test_schema_meta_valid.py
+
+# 显示详细输出
+pytest -v
+```
+
+### 测试工具
+
+测试使用 `tests/conftest.py` 提供的工具函数：
+- `require_ffmpeg_ffprobe()`: 自动跳过需要 ffmpeg/ffprobe 的测试
+- `gen_sine_audio()`: 生成测试音频文件
+- `gen_video_with_audio()`: 生成测试视频文件
+- `ffprobe_summary()`: 读取媒体文件摘要
+
+### 常见问题
+
+**测试被跳过（skip）**
+- 原因：未安装 ffmpeg/ffprobe 或不在 PATH 中
+- 解决：安装 ffmpeg 并确保在 PATH 中可用
+
+**测试失败**
+- 检查 `onepass-ingest check-deps` 是否通过
+- 查看测试输出中的错误信息
+- 某些测试需要特定版本的 ffmpeg 功能，不同版本可能行为略有差异
+
+### 快速验证
+
+使用 `scripts/dev_smoke.py` 进行快速验证：
+
+```bash
+python scripts/dev_smoke.py
+```
+
+该脚本会：
+1. 检查依赖（check-deps）
+2. 生成 1 秒测试音频（使用 ffmpeg）
+3. 运行 ingest 到 `out/smoke_workdir`
+4. 打印输出文件列表和 meta.json 摘要
+
+### Makefile 任务
+
+项目提供 Makefile 用于常用操作：
+
+```bash
+# 运行测试
+make test
+
+# 检查依赖和 CLI
+make check
+
+# 创建虚拟环境（可选）
+make venv
+```
+
+### Schema 校验
+
+测试包含 schema 校验：
+- `test_schema_meta_valid.py`: 验证 meta.json 结构
+- `test_schema_manifest_lines_valid.py`: 验证 manifest.jsonl 结构
+
+Schema 文件位于 `schemas/` 目录：
+- `meta.v1.schema.json`: meta.json 的 JSON Schema
+- `manifest.v1.schema.json`: manifest.jsonl 的 JSON Schema
+- `manifest.plan.v1.schema.json`: manifest.plan.jsonl 的 JSON Schema
+
 ## 输出结构
 给定 `--out <workdir>`：
 
@@ -334,4 +425,6 @@ onepass-ingest ingest <input_dir> --out-root out/batch_demo
 cat out/batch_demo/manifest.jsonl | head
 ls out/batch_demo/ingest.log
 pytest -q
+make test
+python scripts/dev_smoke.py
 ```

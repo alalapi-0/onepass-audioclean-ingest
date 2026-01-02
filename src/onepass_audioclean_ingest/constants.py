@@ -51,3 +51,21 @@ INGEST_EXIT_CODES = {
     "INVALID_PARAMS": 13,  # Updated to match R8
     "OVERWRITE_CONFLICT": 12,  # Added in R8
 }
+
+# Known error codes for validation (R9)
+KNOWN_ERROR_CODES = {
+    "deps_missing",
+    "deps_broken",
+    "deps_insufficient",
+    "input_not_found",
+    "input_invalid",
+    "input_unsupported",
+    "output_not_writable",
+    "overwrite_conflict",
+    "invalid_params",
+    "probe_failed",
+    "convert_failed",
+    "no_audio_stream",
+    "invalid_stream_selection",
+    "internal_error",
+}
