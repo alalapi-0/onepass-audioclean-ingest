@@ -14,7 +14,10 @@ SCHEMAS_DIR = Path(__file__).parent / "schemas"
 # Placeholder for supported audio extensions; to be expanded in future releases
 SUPPORTED_AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg"}
 
-# Placeholder for future error code mapping
+# Error codes for CLI exit status
 ERROR_CODES = {
     "OK": 0,
+    "DEPS_MISSING": 2,
+    "DEPS_BROKEN": 3,
+    "DEPS_INSUFFICIENT": 4,
 }

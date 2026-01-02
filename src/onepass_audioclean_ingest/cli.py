@@ -1,25 +1,79 @@
 """Command-line interface for OnePass AudioClean ingest."""
 from __future__ import annotations
 
+import json
 import sys
 from typing import Optional
 
 import typer
 
-from . import __version__
+from .deps import check_deps, determine_exit_code
 from .logging_utils import get_logger
 
-app = typer.Typer(help="OnePass AudioClean ingest CLI (R1 placeholder)")
+app = typer.Typer(help="OnePass AudioClean ingest CLI")
 logger = get_logger(__name__)
 
 
 @app.command("check-deps")
-def check_deps(config: Optional[str] = typer.Option(None, help="Path to config file")) -> None:
-    """Check local dependencies (ffmpeg/ffprobe). R1 placeholder only."""
+def check_deps_command(
+    config: Optional[str] = typer.Option(None, help="Path to config file"),
+    json_output: bool = typer.Option(False, "--json", help="Output report as JSON"),
+    verbose: bool = typer.Option(False, "--verbose", help="Show verbose details"),
+) -> None:
+    """Check local dependencies (ffmpeg/ffprobe)."""
 
-    typer.echo("check-deps: Not implemented in R1")
     if config:
-        logger.debug("Config path provided but unused in R1: %s", config)
+        logger.debug("Config path provided but unused in check-deps: %s", config)
+
+    report = check_deps()
+    exit_code = determine_exit_code(report)
+
+    if json_output:
+        indent = 2 if verbose else None
+        typer.echo(json.dumps(report.to_dict(), ensure_ascii=False, indent=indent))
+        raise typer.Exit(code=exit_code)
+
+    summary_status = "OK" if report.ok else "FAIL"
+    typer.echo(f"check-deps: {summary_status}")
+
+    ffmpeg_info = report.tools.get("ffmpeg")
+    ffprobe_info = report.tools.get("ffprobe")
+
+    def _fmt_tool(info: Optional[object], name: str) -> str:
+        if info is None:
+            return f"{name}: not found"
+        if hasattr(info, "path"):
+            version_str = f" (version: {getattr(info, 'version', '')})" if getattr(info, "version", None) else ""
+            return f"{name}: {getattr(info, 'path', '')}{version_str}"
+        return f"{name}: unknown"
+
+    typer.echo(_fmt_tool(ffmpeg_info, "ffmpeg"))
+    typer.echo(_fmt_tool(ffprobe_info, "ffprobe"))
+
+    capability_lines = []
+    for key, supported in report.capabilities.items():
+        capability_lines.append(f"  - {key}: {'yes' if supported else 'no'}")
+    typer.echo("capabilities:")
+    for line in capability_lines:
+        typer.echo(line)
+
+    if verbose:
+        typer.echo("errors:")
+        if report.errors:
+            for err in report.errors:
+                hint = f" (hint: {err['hint']})" if err.get("hint") else ""
+                typer.echo(f"  - {err['code']}: {err['message']}{hint}")
+        else:
+            typer.echo("  - none")
+        typer.echo("platform:")
+        for key, value in report.platform.items():
+            typer.echo(f"  - {key}: {value}")
+
+    for err in report.errors:
+        hint = f" (hint: {err['hint']})" if err.get("hint") else ""
+        typer.echo(f"ERROR: {err['message']}{hint}", err=True)
+
+    raise typer.Exit(code=exit_code)
 
 
 @app.command()
