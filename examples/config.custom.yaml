@@ -1,0 +1,26 @@
+# 自定义配置示例
+# 用于覆盖 configs/default.yaml 的默认值
+
+# 采样率（Hz）
+# 常用值：16000, 22050, 44100, 48000
+sample_rate: 22050
+
+# 声道数
+# 1 = 单声道, 2 = 立体声
+channels: 2
+
+# 位深（仅支持 16）
+bit_depth: 16
+
+# 是否启用响度归一化
+# true = 启用, false = 禁用（默认）
+# 注意：启用后会改变波形，可复现性依赖相同的 ffmpeg 版本
+normalize: false
+
+# 音轨选择（可选）
+# audio_stream_index: 1  # 指定音轨索引（从 0 开始）
+# audio_language: "eng"  # 指定音轨语言标签
+
+# 额外 ffmpeg 参数（高级用法，一般不推荐）
+# ffmpeg_extra_args: []
+

@@ -89,9 +89,9 @@ def check_deps_command(
 
 @app.command()
 def ingest(
-    input_path: Optional[str] = typer.Argument(None, help="Path to input file or directory"),
-    out: Optional[str] = typer.Option(None, "--out", help="Workdir for single-file outputs"),
-    out_root: Optional[str] = typer.Option(None, "--out-root", help="Output root when ingesting a directory"),
+    input_path: Optional[str] = typer.Argument(None, help="Path to input file (single-file mode) or directory (batch mode)"),
+    out: Optional[str] = typer.Option(None, "--out", help="Output workdir for single-file mode (required for single-file ingest)"),
+    out_root: Optional[str] = typer.Option(None, "--out-root", help="Output root directory for batch mode (required for directory ingest)"),
     config: Optional[str] = typer.Option(None, help="Path to config file"),
     sample_rate: Optional[int] = typer.Option(None, "--sample-rate", help="Target sample rate"),
     channels: Optional[int] = typer.Option(None, "--channels", help="Target channels"),
@@ -104,10 +104,10 @@ def ingest(
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite existing outputs"),
     recursive: bool = typer.Option(True, "--recursive/--no-recursive", help="Recursively scan directories"),
     ext: Optional[str] = typer.Option(None, "--ext", help="Comma-separated extension whitelist for directory mode"),
-    continue_on_error: bool = typer.Option(True, "--continue-on-error/--fail-fast", help="Keep running on failures"),
-    manifest_name: str = typer.Option(DEFAULT_MANIFEST_NAME, "--manifest-name", help="Manifest filename for batch mode"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Plan batch outputs without converting"),
-    json_output: bool = typer.Option(False, "--json", help="Print meta.json content (single file)"),
+    continue_on_error: bool = typer.Option(True, "--continue-on-error/--fail-fast", help="Error handling strategy: continue on error (default) or fail fast (batch mode only)"),
+    manifest_name: str = typer.Option(DEFAULT_MANIFEST_NAME, "--manifest-name", help="Manifest filename for batch mode (default: manifest.jsonl)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Plan outputs without converting (single-file: meta.json only, batch: manifest.plan.jsonl only)"),
+    json_output: bool = typer.Option(False, "--json", help="Print meta.json content to stdout (single-file mode only)"),
     verbose: bool = typer.Option(False, "--verbose", help="Enable verbose (DEBUG) logging"),
     log_file: Optional[str] = typer.Option(None, "--log-file", help="Path to global log file (batch mode defaults to <out-root>/ingest.log)"),
 ) -> None:
@@ -161,13 +161,13 @@ def ingest(
 
     if is_dir_mode:
         if out is not None:
-            typer.echo("--out cannot be combined with directory input; use --out-root.", err=True)
+            typer.echo("--out cannot be used with directory input; use --out-root for batch mode.", err=True)
             raise typer.Exit(code=INGEST_EXIT_CODES["INVALID_PARAMS"])
         if out_root is None:
-            typer.echo("--out-root is required for directory ingest", err=True)
+            typer.echo("--out-root is required for batch mode (directory ingest)", err=True)
             raise typer.Exit(code=INGEST_EXIT_CODES["INVALID_PARAMS"])
         if not input_path_obj.exists() or not input_path_obj.is_dir():
-            typer.echo("Input directory does not exist", err=True)
+            typer.echo("Input directory does not exist or is not a directory", err=True)
             raise typer.Exit(code=INGEST_EXIT_CODES["INPUT_INVALID"])
 
         options = BatchOptions(
@@ -185,10 +185,10 @@ def ingest(
         raise typer.Exit(code=result.exit_code)
 
     if out_root is not None:
-        typer.echo("--out-root can only be used with directory ingest", err=True)
+        typer.echo("--out-root can only be used with batch mode (directory input)", err=True)
         raise typer.Exit(code=INGEST_EXIT_CODES["INVALID_PARAMS"])
     if out is None:
-        typer.echo("--out is required for single-file ingest", err=True)
+        typer.echo("--out is required for single-file mode", err=True)
         raise typer.Exit(code=INGEST_EXIT_CODES["INVALID_PARAMS"])
 
     workdir = Path(out)
@@ -218,8 +218,8 @@ def ingest(
 
 @app.command()
 def meta(
-    input_path: str = typer.Argument(..., help="Path to input audio file"),
-    out: str = typer.Option(..., "--out", help="Workdir for meta.json"),
+    input_path: str = typer.Argument(..., help="Path to input audio or video file"),
+    out: str = typer.Option(..., "--out", help="Output workdir for meta.json"),
     config: Optional[str] = typer.Option(None, help="Path to config file"),
     json_output: bool = typer.Option(False, "--json", help="Print meta.json content"),
     verbose: bool = typer.Option(False, "--verbose", help="Enable verbose (DEBUG) logging"),
