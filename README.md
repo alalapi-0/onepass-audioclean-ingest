@@ -1,4 +1,4 @@
-# OnePass AudioClean Ingest (R1)
+# OnePass AudioClean Ingest (R2)
 
 ## 目标与范围
 - 提供音频清洗流水线的输入标准化与元数据生成入口骨架。
@@ -29,11 +29,49 @@ onepass-ingest check-deps --help
 onepass-ingest ingest --help
 ```
 
-R1 行为：
-- `onepass-ingest check-deps` 输出 `check-deps: Not implemented in R1`，退出码 0。
-- `onepass-ingest ingest` 输出 `ingest: Not implemented in R1`，退出码 0。
+### check-deps（R2 实现）
+用途：检查本机是否具备最小可用的 ffmpeg/ffprobe，并输出版本与能力探测结果。
 
-未来版本将扩展为真实的依赖检查（本机 ffmpeg/ffprobe）与 ingest 处理逻辑。
+- 人类可读模式（默认）
+
+```bash
+onepass-ingest check-deps
+```
+
+示例输出：
+
+```
+check-deps: OK
+ffmpeg: /usr/bin/ffmpeg (version: 6.1)
+ffprobe: /usr/bin/ffprobe (version: 6.1)
+capabilities:
+  - pcm_s16le: yes
+  - decode_mp3: yes
+  - decode_aac: yes
+  - decode_flac: yes
+  - decode_opus: yes
+```
+
+- JSON 模式（便于流水线）
+
+```bash
+onepass-ingest check-deps --json
+```
+
+- Verbose 模式提供额外上下文
+
+```bash
+onepass-ingest check-deps --verbose
+```
+
+退出码约定：
+
+- 0：依赖满足
+- 2：缺少 ffmpeg 或 ffprobe（deps_missing）
+- 3：存在但运行失败（deps_broken）
+- 4：存在但能力缺失（deps_insufficient）
+
+ffmpeg 安装提示：请从系统包管理器或官方发行包安装 ffmpeg/ffprobe，并确保二进制在 PATH 中。保持离线环境，不提供自动下载脚本。
 
 ## 配置文件
 - 位置：`configs/default.yaml`
