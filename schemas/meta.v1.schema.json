@@ -52,7 +52,16 @@
     "params": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sample_rate", "channels", "bit_depth", "normalize", "normalize_mode", "ffmpeg_extra_args"],
+      "required": [
+        "sample_rate",
+        "channels",
+        "bit_depth",
+        "normalize",
+        "normalize_mode",
+        "ffmpeg_extra_args",
+        "audio_stream_index",
+        "audio_language"
+      ],
       "properties": {
         "sample_rate": {"type": "integer"},
         "channels": {"type": "integer"},
@@ -62,7 +71,9 @@
         "ffmpeg_extra_args": {
           "type": "array",
           "items": {"type": "string"}
-        }
+        },
+        "audio_stream_index": {"type": ["integer", "null"]},
+        "audio_language": {"type": ["string", "null"]}
       }
     },
     "tooling": {
@@ -100,7 +111,22 @@
                 "channels": {"type": ["integer", "null"]},
                 "codec_name": {"type": ["string", "null"]},
                 "format_name": {"type": ["string", "null"]},
-                "bit_rate": {"type": ["integer", "null"]}
+                "bit_rate": {"type": ["integer", "null"]},
+                "has_video": {"type": ["boolean", "null"]},
+                "audio_streams": {
+                  "type": "array",
+                  "items": {"$ref": "#/$defs/audioStream"}
+                },
+                "video_streams": {
+                  "type": "array",
+                  "items": {"$ref": "#/$defs/videoStream"}
+                },
+                "selected_audio_stream": {
+                  "anyOf": [
+                    {"$ref": "#/$defs/audioStream"},
+                    {"type": "null"}
+                  ]
+                }
               }
             },
             {"type": "null"}
@@ -254,6 +280,30 @@
         "code": {"type": "string"},
         "message": {"type": "string"},
         "detail": {"type": ["object", "null"]}
+      }
+    },
+    "audioStream": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "index": {"type": ["integer", "null"]},
+        "codec_name": {"type": ["string", "null"]},
+        "sample_rate": {"type": ["integer", "null"]},
+        "channels": {"type": ["integer", "null"]},
+        "channel_layout": {"type": ["string", "null"]},
+        "bit_rate": {"type": ["integer", "null"]},
+        "language": {"type": ["string", "null"]}
+      }
+    },
+    "videoStream": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "index": {"type": ["integer", "null"]},
+        "codec_name": {"type": ["string", "null"]},
+        "width": {"type": ["integer", "null"]},
+        "height": {"type": ["integer", "null"]},
+        "r_frame_rate": {"type": ["string", "null"]}
       }
     }
   }
