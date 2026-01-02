@@ -56,7 +56,14 @@ def load_config(config_path: Path | None = None) -> Dict[str, Any]:
     path = config_path or DEFAULT_CONFIG_PATH
     if path != DEFAULT_CONFIG_PATH and not path.exists():
         raise ConfigError(f"Config path does not exist: {path}")
-    return load_default_config() if path == DEFAULT_CONFIG_PATH else _load_custom_config(path)
+
+    base = load_default_config()
+    if path == DEFAULT_CONFIG_PATH:
+        return base
+
+    override = _load_custom_config(path)
+    merged = {**base, **(override or {})}
+    return merged
 
 
 def _load_custom_config(path: Path) -> Dict[str, Any]:

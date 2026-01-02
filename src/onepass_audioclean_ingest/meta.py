@@ -136,11 +136,14 @@ def _stable_fields() -> Dict[str, Any]:
         "input.sha256",
         "tooling.python",
         "probe.warnings",
+        "probe.output_ffprobe",
+        "output.actual_audio",
         "errors",
     ]
     notes = (
         "Core fields drive reproducibility (paths within workdir, params, expected_audio). "
-        "Non-core fields may change across runs or machines (timestamps, absolute paths, platform)."
+        "Non-core fields may change across runs or machines (timestamps, absolute paths, platform). "
+        "Actual audio attributes are captured to validate the conversion but are derived from ffprobe and may vary slightly across ffmpeg builds."
     )
     return {"core": core_fields, "non_core": non_core_fields, "notes": notes}
 
@@ -152,6 +155,7 @@ def build_meta(
     tooling: DepsReport,
     probe: Optional[Dict[str, Any]],
     errors: List[MetaError],
+    actual_audio: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Assemble the meta dictionary adhering to the v1 schema."""
 
@@ -159,7 +163,7 @@ def build_meta(
     schema_version = "meta.v1"
     pipeline = {"repo": "onepass-audioclean-ingest", "repo_version": _repo_version()}
 
-    probe_obj = probe if probe is not None else {"input_ffprobe": None, "warnings": []}
+    probe_obj = probe if probe is not None else {"input_ffprobe": None, "warnings": [], "output_ffprobe": None}
 
     output_obj = {
         "workdir": str(workdir),
@@ -172,7 +176,7 @@ def build_meta(
             "channels": params.channels,
             "bit_depth": params.bit_depth,
         },
-        "actual_audio": None,
+        "actual_audio": actual_audio,
     }
 
     meta = {

@@ -114,3 +114,97 @@ def ffprobe_input(path: Path, timeout_sec: int = 30) -> ProbeResult:
         )
 
     return ProbeResult(input_ffprobe=probe_summary, warnings=warnings, errors=[])
+
+
+def ffprobe_output(path: Path, timeout_sec: int = 30) -> tuple[Optional[Dict[str, Any]], List[MetaError]]:
+    """Probe the generated output file to capture actual audio attributes."""
+
+    ffprobe_path = shutil.which("ffprobe")
+    if not ffprobe_path:
+        return None, [
+            MetaError(
+                code="probe_missing",
+                message="ffprobe not found in PATH",
+                hint="Install ffprobe or ensure it is available in PATH.",
+            )
+        ]
+
+    try:
+        result = run_cmd(
+            [
+                ffprobe_path,
+                "-hide_banner",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
+                str(path),
+            ],
+            timeout_sec=timeout_sec,
+        )
+    except CommandTimeout as exc:
+        return None, [
+            MetaError(
+                code="probe_timeout",
+                message=f"ffprobe timed out after {exc.timeout_sec}s",
+                hint="Retry with a smaller file or adjust timeout.",
+            )
+        ]
+
+    if result.returncode != 0:
+        return None, [
+            MetaError(
+                code="probe_failed",
+                message=f"ffprobe returned {result.returncode}",
+                detail={"stderr": result.stderr},
+            )
+        ]
+
+    try:
+        parsed = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:  # pragma: no cover - defensive
+        return None, [
+            MetaError(
+                code="probe_parse_error",
+                message="Failed to parse ffprobe JSON output",
+                detail={"error": str(exc)},
+            )
+        ]
+
+    audio_stream = None
+    for stream in parsed.get("streams", []):
+        if stream.get("codec_type") == "audio":
+            audio_stream = stream
+            break
+
+    def _to_int(value: Any) -> Optional[int]:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _to_float(value: Any) -> Optional[float]:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    format_section = parsed.get("format", {}) if isinstance(parsed, dict) else {}
+    summary = {
+        "duration": _to_float(format_section.get("duration")),
+        "sample_rate": _to_int(audio_stream.get("sample_rate")) if audio_stream else None,
+        "channels": _to_int(audio_stream.get("channels")) if audio_stream else None,
+        "codec_name": audio_stream.get("codec_name") if audio_stream else None,
+        "format_name": format_section.get("format_name"),
+        "bit_rate": _to_int(format_section.get("bit_rate")),
+        "size_bytes": _to_int(format_section.get("size")),
+    }
+
+    if audio_stream and audio_stream.get("bits_per_sample"):
+        summary["bit_depth"] = _to_int(audio_stream.get("bits_per_sample"))
+    else:
+        summary["bit_depth"] = None
+
+    return summary, []
