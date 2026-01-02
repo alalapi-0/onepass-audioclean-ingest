@@ -26,10 +26,10 @@ def test_cli_subcommands() -> None:
     assert result.stdout
 
     ingest_result = subprocess.run(
-        ["python", "-m", "onepass_audioclean_ingest.cli", "ingest"],
+        ["python", "-m", "onepass_audioclean_ingest.cli", "ingest", "--help"],
         check=False,
         capture_output=True,
         text=True,
     )
     assert ingest_result.returncode == 0
-    assert "Not implemented" in ingest_result.stdout
+    assert "--out" in ingest_result.stdout
