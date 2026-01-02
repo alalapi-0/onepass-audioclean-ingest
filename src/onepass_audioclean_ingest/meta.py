@@ -126,6 +126,8 @@ def _stable_fields() -> Dict[str, Any]:
         "params.audio_stream_index",
         "params.audio_language",
         "output.workdir",
+        "output.work_id",
+        "output.work_key",
         "output.audio_wav",
         "output.meta_json",
         "output.convert_log",
@@ -149,7 +151,8 @@ def _stable_fields() -> Dict[str, Any]:
     notes = (
         "Core fields drive reproducibility (paths within workdir, params, expected_audio). "
         "Non-core fields may change across runs or machines (timestamps, absolute paths, platform). "
-        "Actual audio attributes are captured to validate the conversion but are derived from ffprobe and may vary slightly across ffmpeg builds."
+        "Actual audio attributes are captured to validate the conversion but are derived from ffprobe and may vary slightly across ffmpeg builds. "
+        "output.work_id/work_key track the deterministic workdir naming based on path+size in batch runs."
     )
     return {"core": core_fields, "non_core": non_core_fields, "notes": notes}
 
@@ -162,6 +165,8 @@ def build_meta(
     probe: Optional[Dict[str, Any]],
     errors: List[MetaError],
     actual_audio: Optional[Dict[str, Any]] = None,
+    output_work_id: Optional[str] = None,
+    output_work_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Assemble the meta dictionary adhering to the v1 schema."""
 
@@ -173,6 +178,8 @@ def build_meta(
 
     output_obj = {
         "workdir": str(workdir),
+        "work_id": output_work_id,
+        "work_key": output_work_key,
         "audio_wav": DEFAULT_AUDIO_FILENAME,
         "meta_json": DEFAULT_META_FILENAME,
         "convert_log": DEFAULT_LOG_FILENAME,

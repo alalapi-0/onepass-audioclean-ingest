@@ -170,6 +170,8 @@
       ],
       "properties": {
         "workdir": {"type": "string"},
+        "work_id": {"type": ["string", "null"]},
+        "work_key": {"type": ["string", "null"]},
         "audio_wav": {"type": "string"},
         "meta_json": {"type": "string"},
         "convert_log": {"type": "string"},
