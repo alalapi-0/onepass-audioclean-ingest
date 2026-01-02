@@ -3,20 +3,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import shutil
 import sys
-from typing import Optional
+from typing import Optional, Set
 
 import typer
 
+from .batch import BatchOptions, run_batch, compute_work_id
 from .config import ConfigError, load_config
-from .constants import DEFAULT_AUDIO_FILENAME, DEFAULT_LOG_FILENAME, DEFAULT_META_FILENAME, INGEST_EXIT_CODES
-from .convert import convert_audio_to_wav
+from .constants import DEFAULT_MANIFEST_NAME, INGEST_EXIT_CODES, SUPPORTED_MEDIA_EXTENSIONS
 from .deps import check_deps, determine_exit_code
+from .ingest_core import ingest_one
 from .logging_utils import get_logger
-from .media import select_audio_stream
-from .meta import IngestParams, MetaError, build_meta, write_meta
-from .probe import ffprobe_input, ffprobe_output
+from .meta import IngestParams
 
 app = typer.Typer(help="OnePass AudioClean ingest CLI")
 logger = get_logger(__name__)
@@ -86,8 +84,9 @@ def check_deps_command(
 
 @app.command()
 def ingest(
-    input_path: Optional[str] = typer.Argument(None, help="Path to input audio file"),
-    out: str = typer.Option(..., "--out", help="Workdir for outputs"),
+    input_path: Optional[str] = typer.Argument(None, help="Path to input file or directory"),
+    out: Optional[str] = typer.Option(None, "--out", help="Workdir for single-file outputs"),
+    out_root: Optional[str] = typer.Option(None, "--out-root", help="Output root when ingesting a directory"),
     config: Optional[str] = typer.Option(None, help="Path to config file"),
     sample_rate: Optional[int] = typer.Option(None, "--sample-rate", help="Target sample rate"),
     channels: Optional[int] = typer.Option(None, "--channels", help="Target channels"),
@@ -98,13 +97,21 @@ def ingest(
         None, "--audio-language", help="Preferred audio language tag (e.g. eng, jpn)"
     ),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite existing outputs"),
-    json_output: bool = typer.Option(False, "--json", help="Print meta.json content"),
+    recursive: bool = typer.Option(True, "--recursive/--no-recursive", help="Recursively scan directories"),
+    ext: Optional[str] = typer.Option(None, "--ext", help="Comma-separated extension whitelist for directory mode"),
+    continue_on_error: bool = typer.Option(True, "--continue-on-error/--fail-fast", help="Keep running on failures"),
+    manifest_name: str = typer.Option(DEFAULT_MANIFEST_NAME, "--manifest-name", help="Manifest filename for batch mode"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Plan batch outputs without converting"),
+    json_output: bool = typer.Option(False, "--json", help="Print meta.json content (single file)"),
 ) -> None:
-    """Ingest and normalize audio inputs (single-file to WAV)."""
+    """Ingest a single file or a directory of media."""
 
     if input_path is None:
         typer.echo("Input path is required", err=True)
         raise typer.Exit(code=INGEST_EXIT_CODES["INPUT_INVALID"])
+
+    input_path_obj = Path(input_path)
+    is_dir_mode = input_path_obj.is_dir() or out_root is not None
 
     try:
         config_data = load_config(Path(config)) if config else load_config()
@@ -113,7 +120,6 @@ def ingest(
         raise typer.Exit(code=INGEST_EXIT_CODES["INVALID_PARAMS"])
 
     params = IngestParams.from_config(config_data)
-
     if sample_rate is not None:
         params.sample_rate = int(sample_rate)
     if channels is not None:
@@ -126,152 +132,68 @@ def ingest(
         params.normalize_mode = "loudnorm=I=-16:LRA=11:TP=-1.5"
     if not params.normalize:
         params.normalize_mode = None
-
     if audio_stream_index is not None:
         params.audio_stream_index = int(audio_stream_index)
     if audio_language is not None:
         params.audio_language = audio_language
 
-    errors: list[MetaError] = []
-    if params.bit_depth != 16:
-        errors.append(
-            MetaError(
-                code="invalid_params",
-                message="Only 16-bit PCM output is supported in R4",
-                hint="Use --bit-depth 16",
-            )
+    def _parse_ext(value: Optional[str]) -> Set[str]:
+        if value is None:
+            return SUPPORTED_MEDIA_EXTENSIONS
+        parsed = {item.strip().lower() for item in value.split(",") if item.strip()}
+        return {f".{e}" if not e.startswith(".") else e for e in parsed}
+
+    if is_dir_mode:
+        if out is not None:
+            typer.echo("--out cannot be combined with directory input; use --out-root.", err=True)
+            raise typer.Exit(code=INGEST_EXIT_CODES["INVALID_PARAMS"])
+        if out_root is None:
+            typer.echo("--out-root is required for directory ingest", err=True)
+            raise typer.Exit(code=INGEST_EXIT_CODES["INVALID_PARAMS"])
+        if not input_path_obj.exists() or not input_path_obj.is_dir():
+            typer.echo("Input directory does not exist", err=True)
+            raise typer.Exit(code=INGEST_EXIT_CODES["INPUT_INVALID"])
+
+        options = BatchOptions(
+            params=params,
+            overwrite=overwrite,
+            recursive=recursive,
+            exts=_parse_ext(ext),
+            continue_on_error=continue_on_error,
+            manifest_name=manifest_name,
+            dry_run=dry_run,
         )
-        params.bit_depth = 16
+        result = run_batch(input_path_obj, Path(out_root), options)
+        raise typer.Exit(code=result.exit_code)
 
-    input_path_obj = Path(input_path)
-    workdir = Path(out)
-
-    try:
-        workdir.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:  # pragma: no cover - filesystem failure
-        typer.echo(f"Failed to create workdir {workdir}: {exc}", err=True)
-        raise typer.Exit(code=INGEST_EXIT_CODES["OUTPUT_NOT_WRITABLE"])
-
-    audio_out = workdir / DEFAULT_AUDIO_FILENAME
-    meta_path = workdir / DEFAULT_META_FILENAME
-    log_path = workdir / DEFAULT_LOG_FILENAME
-
-    if workdir.exists() and not overwrite:
-        if audio_out.exists() or meta_path.exists() or log_path.exists():
-            typer.echo("Workdir already contains outputs; use --overwrite to replace.", err=True)
-            raise typer.Exit(code=INGEST_EXIT_CODES["OUTPUT_NOT_WRITABLE"])
-
-    deps_report = check_deps()
-    deps_errors = [
-        MetaError(code=e.get("code", "deps_error"), message=e.get("message", ""), hint=e.get("hint"))
-        for e in deps_report.errors
-    ]
-    errors.extend(deps_errors)
-
-    probe_result = ffprobe_input(input_path_obj)
-    errors.extend(probe_result.errors)
-
-    selected_stream = None
-    selection_errors: list[MetaError] = []
-    selection_warnings: list[dict] = []
-    if probe_result.input_ffprobe is not None:
-        selected_stream, selection_errors, selection_warnings = select_audio_stream(
-            probe_result.input_ffprobe,
-            preferred_index=params.audio_stream_index,
-            preferred_language=params.audio_language,
-        )
-        probe_result.input_ffprobe["selected_audio_stream"] = selected_stream
-
-    errors.extend(selection_errors)
-
-    probe_obj = {
-        "input_ffprobe": probe_result.input_ffprobe,
-        "warnings": probe_result.warnings + selection_warnings,
-        "output_ffprobe": None,
-    }
-
-    actual_audio = None
-    convert_rc: Optional[int] = None
-
-    deps_exit = determine_exit_code(deps_report)
-    if deps_exit != 0:
-        meta_obj = build_meta(input_path_obj, workdir, params, deps_report, probe_obj, errors, actual_audio)
-        write_meta(meta_obj, meta_path)
-        if json_output:
-            typer.echo(json.dumps(meta_obj, ensure_ascii=False, sort_keys=True, indent=2))
-        raise typer.Exit(code=INGEST_EXIT_CODES["DEPS_MISSING"])
-
-    if errors and any(err.code == "invalid_params" for err in errors):
-        meta_obj = build_meta(input_path_obj, workdir, params, deps_report, probe_obj, errors, actual_audio)
-        write_meta(meta_obj, meta_path)
-        if json_output:
-            typer.echo(json.dumps(meta_obj, ensure_ascii=False, sort_keys=True, indent=2))
+    if out_root is not None:
+        typer.echo("--out-root can only be used with directory ingest", err=True)
+        raise typer.Exit(code=INGEST_EXIT_CODES["INVALID_PARAMS"])
+    if out is None:
+        typer.echo("--out is required for single-file ingest", err=True)
         raise typer.Exit(code=INGEST_EXIT_CODES["INVALID_PARAMS"])
 
-    if not input_path_obj.exists():
-        errors.append(
-            MetaError(
-                code="input_not_found",
-                message=f"Input file not found: {input_path_obj}",
-                hint="Check the path and try again.",
-            )
-        )
-        meta_obj = build_meta(input_path_obj, workdir, params, deps_report, probe_obj, errors, actual_audio)
-        write_meta(meta_obj, meta_path)
-        if json_output:
-            typer.echo(json.dumps(meta_obj, ensure_ascii=False, sort_keys=True, indent=2))
-        raise typer.Exit(code=INGEST_EXIT_CODES["INPUT_INVALID"])
+    workdir = Path(out)
+    size_bytes = input_path_obj.stat().st_size if input_path_obj.exists() else None
+    work_key, work_id = compute_work_id(input_path_obj, size_bytes=size_bytes)
 
-    stream_error_codes = {"no_audio_stream", "invalid_audio_stream_index", "audio_language_not_found"}
-    if any(err.code in stream_error_codes for err in errors):
-        exit_code = INGEST_EXIT_CODES["INVALID_STREAM_SELECTION"]
-        if any(err.code == "no_audio_stream" for err in errors):
-            exit_code = INGEST_EXIT_CODES["NO_SUPPORTED_STREAM"]
-        meta_obj = build_meta(input_path_obj, workdir, params, deps_report, probe_obj, errors, actual_audio)
-        write_meta(meta_obj, meta_path)
-        if json_output:
-            typer.echo(json.dumps(meta_obj, ensure_ascii=False, sort_keys=True, indent=2))
-        raise typer.Exit(code=exit_code)
-
-    ffmpeg_path = deps_report.tools.get("ffmpeg").path if deps_report.tools.get("ffmpeg") else shutil.which("ffmpeg")
-    selected_index = selected_stream.get("index") if isinstance(selected_stream, dict) else None
-    convert_result = convert_audio_to_wav(
-        input_path_obj, audio_out, params, log_path, ffmpeg_path, overwrite, audio_stream_index=selected_index
+    result = ingest_one(
+        input_path_obj,
+        workdir,
+        params,
+        overwrite,
+        output_work_id=work_id,
+        output_work_key=work_key,
     )
-    convert_rc = convert_result.returncode
-
-    if convert_result.returncode != 0 or not audio_out.exists():
-        errors.append(
-            MetaError(
-                code="convert_failed",
-                message=f"ffmpeg conversion failed (code={convert_result.returncode})",
-                detail={"stderr": convert_result.stderr},
-            )
-        )
-        meta_obj = build_meta(input_path_obj, workdir, params, deps_report, probe_obj, errors, actual_audio)
-        write_meta(meta_obj, meta_path)
-        if json_output:
-            typer.echo(json.dumps(meta_obj, ensure_ascii=False, sort_keys=True, indent=2))
-        raise typer.Exit(code=INGEST_EXIT_CODES["CONVERT_FAILED"])
-
-    output_probe, output_probe_errors = ffprobe_output(audio_out)
-    errors.extend(output_probe_errors)
-    actual_audio = output_probe
-    probe_obj["output_ffprobe"] = output_probe
-
-    if actual_audio is not None and actual_audio.get("bit_depth") is None:
-        actual_audio["bit_depth"] = params.bit_depth
-
-    meta_obj = build_meta(input_path_obj, workdir, params, deps_report, probe_obj, errors, actual_audio)
-    write_meta(meta_obj, meta_path)
 
     if json_output:
-        typer.echo(json.dumps(meta_obj, ensure_ascii=False, sort_keys=True, indent=2))
+        try:
+            meta_content = json.loads(result.meta_path.read_text(encoding="utf-8"))
+            typer.echo(json.dumps(meta_content, ensure_ascii=False, sort_keys=True, indent=2))
+        except OSError:
+            typer.echo("Failed to read generated meta.json", err=True)
 
-    if output_probe_errors:
-        raise typer.Exit(code=INGEST_EXIT_CODES["PROBE_FAILED"])
-
-    raise typer.Exit(code=convert_rc if convert_rc is not None else INGEST_EXIT_CODES["SUCCESS"])
+    raise typer.Exit(code=result.exit_code)
 
 
 @app.command()
