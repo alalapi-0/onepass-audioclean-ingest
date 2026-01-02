@@ -19,7 +19,8 @@ from .constants import (
     MANIFEST_PLAN_SCHEMA_VERSION,
     SUPPORTED_MEDIA_EXTENSIONS,
 )
-from .deps import check_deps
+from .deps import check_deps, determine_exit_code
+from .errors import ErrorCode, ExitCode, IngestError, summarize_errors
 from .ingest_core import ingest_one
 from .logging_utils import get_logger
 from .params import IngestParams, params_digest
@@ -39,6 +40,7 @@ class BatchOptions:
     continue_on_error: bool = True
     manifest_name: str = DEFAULT_MANIFEST_NAME
     dry_run: bool = False
+    log_file: Optional[Path] = None
 
 
 @dataclass
@@ -102,11 +104,36 @@ def run_batch(input_dir: Path, out_root: Path, options: BatchOptions) -> BatchRe
     exts = set(options.exts) if options.exts else set(SUPPORTED_MEDIA_EXTENSIONS)
     manifest_path = _make_manifest_path(out_root, options.manifest_name, options.dry_run)
 
+    # Check deps at the start - if missing, exit early with code 2
+    deps_report = check_deps()
+    deps_exit = determine_exit_code(deps_report)
+    if deps_exit != 0:
+        logger.error("Dependencies check failed, cannot proceed with batch ingest")
+        # Write a minimal manifest entry if possible
+        try:
+            with manifest_path.open("w", encoding="utf-8", newline="\n") as f:
+                record = {
+                    "schema_version": MANIFEST_SCHEMA_VERSION,
+                    "status": "failed",
+                    "exit_code": deps_exit,
+                    "error_codes": ["deps_missing"],
+                    "error_messages": ["Dependencies (ffmpeg/ffprobe) are missing or broken"],
+                    "message": "Batch ingest aborted due to missing dependencies",
+                    "input": {"path": str(input_dir), "relpath": ".", "ext": "", "size_bytes": 0},
+                    "output": {"workdir": str(out_root), "work_id": None, "work_key": None},
+                    "started_at": datetime.utcnow().isoformat() + "Z",
+                    "ended_at": datetime.utcnow().isoformat() + "Z",
+                    "duration_ms": 0,
+                }
+                f.write(_manifest_line(record) + "\n")
+        except Exception:  # pragma: no cover
+            pass
+        return BatchResult(exit_code=deps_exit, processed=0, succeeded=0, failed=0, manifest_path=manifest_path)
+
     files = scan_inputs(input_dir, recursive=options.recursive, exts=exts)
     if not files:
         logger.info("No inputs found under %s", input_dir)
 
-    deps_report = check_deps()
     manifest_handle = manifest_path.open("w", encoding="utf-8", newline="\n")
 
     processed = 0
@@ -169,14 +196,20 @@ def run_batch(input_dir: Path, out_root: Path, options: BatchOptions) -> BatchRe
         except Exception as exc:  # pragma: no cover - defensive
             ended = datetime.utcnow()
             failed += 1
-            exit_code = 1
+            exit_code = ExitCode.PARTIAL_FAILED
+            error_codes, error_messages = summarize_errors(
+                [IngestError(code=ErrorCode.INTERNAL_ERROR, message=f"Unhandled error: {exc}")]
+            )
             record = {
                 "schema_version": MANIFEST_SCHEMA_VERSION,
                 "status": "failed",
-                "exit_code": 1,
-                "error_codes": ["unhandled_error"],
+                "exit_code": ExitCode.INTERNAL_ERROR,
+                "error_codes": error_codes,
+                "error_messages": error_messages,
+                "warning_codes": [],
+                "warning_messages": [],
                 "message": f"Unhandled error: {exc}",
-                "errors_summary": str(exc),
+                "errors_summary": str(exc)[:200],
                 "input": {
                     "path": str(path),
                     "relpath": relpath,
@@ -194,6 +227,7 @@ def run_batch(input_dir: Path, out_root: Path, options: BatchOptions) -> BatchRe
                 "started_at": started.isoformat() + "Z",
                 "ended_at": ended.isoformat() + "Z",
                 "duration_ms": int((ended - started).total_seconds() * 1000),
+                "params_digest": _params_digest(options.params),
             }
             manifest_handle.write(_manifest_line(record) + "\n")
             manifest_handle.flush()
@@ -203,20 +237,27 @@ def run_batch(input_dir: Path, out_root: Path, options: BatchOptions) -> BatchRe
 
         ended = result.ended_at or datetime.utcnow()
         status = result.status
-        error_codes = [err.code for err in result.errors]
+        error_codes, error_messages = summarize_errors(result.errors)
+        warning_codes, warning_messages = summarize_errors(result.warnings)
         if status != "success":
             failed += 1
-            exit_code = 1
+            exit_code = ExitCode.PARTIAL_FAILED
         else:
             succeeded += 1
+
+        # Determine meta_json path
+        meta_json_path = str(result.meta_path) if result.meta_path.exists() else None
 
         record = {
             "schema_version": MANIFEST_SCHEMA_VERSION,
             "status": status,
             "exit_code": result.exit_code,
             "error_codes": error_codes,
+            "error_messages": error_messages,
+            "warning_codes": warning_codes,
+            "warning_messages": warning_messages,
             "message": result.message,
-            "errors_summary": _error_summary(result.errors),
+            "errors_summary": "; ".join(error_messages) if error_messages else "",
             "input": {
                 "path": str(path),
                 "relpath": relpath,
@@ -231,6 +272,8 @@ def run_batch(input_dir: Path, out_root: Path, options: BatchOptions) -> BatchRe
                 "meta_json": str(workdir / DEFAULT_META_FILENAME),
                 "convert_log": str(workdir / DEFAULT_LOG_FILENAME),
             },
+            "meta_json_path": meta_json_path,
+            "log_file": str(options.log_file) if options.log_file else None,
             "started_at": (result.started_at or started).isoformat() + "Z",
             "ended_at": ended.isoformat() + "Z",
             "duration_ms": result.duration_ms or int((ended - started).total_seconds() * 1000),
@@ -243,8 +286,12 @@ def run_batch(input_dir: Path, out_root: Path, options: BatchOptions) -> BatchRe
             break
 
     manifest_handle.close()
+
+    # Final exit code: 0 if all succeeded, 1 if any failed, 2 if deps missing (already handled)
+    final_exit_code = ExitCode.SUCCESS if failed == 0 else ExitCode.PARTIAL_FAILED
+
     return BatchResult(
-        exit_code=exit_code,
+        exit_code=final_exit_code,
         processed=processed,
         succeeded=succeeded,
         failed=failed,

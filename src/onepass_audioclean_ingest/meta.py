@@ -25,7 +25,7 @@ from .params import IngestParams
 
 @dataclass
 class MetaError:
-    """Structured error entry for meta.json."""
+    """Structured error entry for meta.json (deprecated, use errors.IngestError)."""
 
     code: str
     message: str
@@ -133,6 +133,7 @@ def _stable_fields() -> Dict[str, Any]:
         "probe.output_ffprobe",
         "output.actual_audio",
         "errors",
+        "warnings",
         "execution",
     ]
     notes = (
@@ -174,6 +175,7 @@ def build_meta(
     params_digest: Optional[str] = None,
     cmd_digest: Optional[str] = None,
     planned: bool = False,
+    warnings: Optional[List[MetaError]] = None,
 ) -> Dict[str, Any]:
     """Assemble the meta dictionary adhering to the v1 schema."""
 
@@ -215,6 +217,7 @@ def build_meta(
     execution_obj["ffmpeg_cmd_str"] = execution_obj.get("ffmpeg_cmd_str") or _cmd_str(execution_obj.get("ffmpeg_cmd"))
     execution_obj["planned"] = planned or execution_obj.get("planned", False)
 
+    warnings_list = warnings or []
     meta = {
         "schema_version": schema_version,
         "created_at": datetime.utcnow().isoformat() + "Z",
@@ -228,6 +231,7 @@ def build_meta(
         "execution": execution_obj,
         "integrity": {"meta_sha256": None, "output_audio_sha256": None, "params_digest": params_digest},
         "errors": [err.to_dict() for err in errors],
+        "warnings": [warn.to_dict() for warn in warnings_list],
         "stable_fields": _stable_fields(),
     }
     return meta

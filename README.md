@@ -1,11 +1,19 @@
-# OnePass AudioClean Ingest (R7)
+# OnePass AudioClean Ingest (R8)
 
 ## 目标与范围
 - 提供音频清洗流水线的输入标准化与元数据生成入口骨架。
 - 仅聚焦 ingest：不做分段、不做 ASR、不做口误检测、不做剪辑，不引入任何联网或模型下载逻辑。
 - 默认离线可用，依赖仅限 Python 包与本机可用的 ffmpeg/ffprobe。
 
-## R7 范围
+## R8 范围
+- 统一错误模型：新增 `errors.py` 模块，定义统一的错误码常量（ErrorCode）和退出码（ExitCode），全仓库使用同一套错误处理体系。
+- 统一日志体系：支持 `--verbose`（提升到 DEBUG 级别）和 `--log-file`（输出全局日志文件），批处理默认写入 `<out-root>/ingest.log`。
+- 批处理鲁棒性增强：`--continue-on-error` 默认开启，失败不影响后续文件；`--fail-fast` 遇到失败立即终止；退出码规则明确（0=全部成功，1=存在失败，2=deps_missing）。
+- 错误与警告区分：meta.json 新增 `warnings` 字段，区分不影响处理的警告（如输出 probe 失败但转换成功）与阻止处理的错误。
+- manifest.jsonl 增强：新增 `error_messages`、`warning_codes`、`warning_messages`、`meta_json_path` 字段，错误信息更可读。
+- 错误详情控制：使用 `safe_detail()` 函数控制 meta.json 中错误详情的体积，避免大段 stderr 塞进 meta。
+
+## R7 范围（历史）
 - 保留单文件 ingest 与目录批处理，并落地 normalize 功能：默认关闭，开启后使用固定的单遍 `loudnorm` 滤镜，记录 filtergraph 与参数。
 - 参数来源可追溯：meta.json 写入 `params_sources`，指明每个关键参数来自 default/config/cli；`params.normalize_config` 固定记录滤镜配置。
 - dry-run 统一：单文件模式生成 meta.json（planned 状态，`execution.planned=true`），不写 audio.wav/convert.log；目录模式写 `manifest.plan.jsonl`，只输出计划。
@@ -33,7 +41,7 @@ onepass-ingest ingest --help
 ```
 
 ### check-deps（R2）
-用途：检查本机是否具备最小可用的 ffmpeg/ffprobe，并输出版本与能力探测结果。支持 `--json` 和 `--verbose`，退出码 0/2/3/4 与 R2 保持一致。
+用途：检查本机是否具备最小可用的 ffmpeg/ffprobe，并输出版本与能力探测结果。支持 `--json`、`--verbose` 和 `--log-file`，退出码 0/2/3/4 与 R2 保持一致。
 
 ### meta（R4，生成 meta.json 不转码）
 用途：仅生成 `meta.json`（不做转码），可在后续流水线中复用。
@@ -43,13 +51,16 @@ onepass-ingest ingest --help
 ```bash
 onepass-ingest meta <input> --out <workdir>
 onepass-ingest meta input.wav --out out/input__hash --json
+onepass-ingest meta input.wav --out out/input__hash --verbose --log-file meta.log
 ```
 
 行为与退出策略：
 
-- workdir 不存在会自动创建；创建失败退出码 1。
+- workdir 不存在会自动创建；创建失败退出码 11。
 - 其它失败（如 ffprobe 缺失、输入不存在）会记录到 `meta.errors`，依然写出 meta.json 并返回 0，方便流水线继续。
 - `--json` 会把生成的 meta 内容输出到 stdout，便于调试。
+- `--verbose` 启用 DEBUG 级别日志。
+- `--log-file` 指定日志文件路径。
 
 ### ingest（R6，单文件或目录）
 用途：将输入音频或视频转换为标准 PCM s16le wav，生成 meta.json 与 convert.log；目录模式会为每个媒体生成独立 workdir 并汇总 manifest。
@@ -66,17 +77,24 @@ onepass-ingest ingest data/raw --out-root out/batch --recursive
 onepass-ingest ingest data/raw --out-root out/batch --ext mp3,wav,mp4 --fail-fast
 # dry-run：只规划 workdir 和 manifest.plan.jsonl，不转码
 onepass-ingest ingest data/raw --out-root out/batch --dry-run
+# 指定日志文件
+onepass-ingest ingest data/raw --out-root out/batch --log-file custom.log
+# 启用详细日志
+onepass-ingest ingest data/raw --out-root out/batch --verbose
 ```
 
 行为与退出策略：
 
-- 依赖检查：执行前调用 `check-deps`，若 ffmpeg/ffprobe 缺失或不可用，退出码 2 并尽量写出 meta.json。目录模式依然逐文件写 meta.json；最终退出码为 1 若任一失败（除非全部成功）。
+- 依赖检查：批处理开始前检查 `check-deps`，若 ffmpeg/ffprobe 缺失或不可用，退出码 2 并写入 manifest 说明 deps 错误。单文件模式若 deps 缺失，退出码 2。
 - 输入缺失：记录到 meta.errors，退出码 10。目录模式下单个文件缺失记为 failed，其余继续（除非 `--fail-fast`）。
-- bit depth 仅允许 16；其它值会记录错误并退出码 30。
-- 默认不覆盖既有输出；如 workdir 内已有 `audio.wav`/`meta.json`/`convert.log`，需显式 `--overwrite`。
-- 转换失败记录 stderr 到 meta.errors 和 convert.log，退出码 20；输出 ffprobe 失败但文件已生成时退出码 21。
-- `--continue-on-error/--fail-fast`：默认 continue，遇失败仍写 manifest 并处理后续；fail-fast 时第一条失败后立即停止，退出码 1。
+- bit depth 仅允许 16；其它值会记录错误并退出码 13。
+- 默认不覆盖既有输出；如 workdir 内已有 `audio.wav`/`meta.json`/`convert.log`，需显式 `--overwrite`，否则退出码 12。
+- 转换失败记录 stderr 到 meta.errors 和 convert.log，退出码 21；输出 ffprobe 失败但文件已生成时记录为 warning（不影响退出码）。
+- `--continue-on-error/--fail-fast`：默认 continue-on-error，遇失败仍写 manifest 并处理后续；fail-fast 时第一条失败后立即停止，退出码 1。
+- 批处理退出码：全部成功=0，存在失败=1，deps_missing=2。
 - `--json` 仅适用于单文件模式，打印 meta.json 内容到 stdout（仅 JSON）。
+- `--verbose` 启用 DEBUG 级别日志。
+- `--log-file` 指定全局日志文件路径；批处理模式若不指定，默认写入 `<out-root>/ingest.log`。
 - normalize：默认关闭，开启后使用固定单遍滤镜 `loudnorm=I=-16:LRA=11:TP=-1.5:linear=true:print_format=summary`，模式名 `loudnorm_r7_v1`，配置写入 `meta.params.normalize_config`。启用后会改变波形，可复现性依赖相同的 ffmpeg 版本与滤镜参数。
 
 #### Dry-run 行为（R7）
@@ -150,6 +168,7 @@ onepass-ingest ingest data/raw --out-root out/batch --dry-run
 | `execution` | ffmpeg 命令记录：结构化命令数组、可复制命令行、filtergraph（如有）、cmd_digest、planned 标记 |
 | `integrity` | meta/audio 的可选 sha256 摘要（R4+ 补全），并包含 `params_digest` 便于对比参数一致性 |
 | `errors` | 结构化错误列表（包含 code/message/hint/detail） |
+| `warnings` | 结构化警告列表（R8 新增，格式与 errors 相同） |
 | `stable_fields` | 列出核心与非核心字段路径及说明 |
 
 核心字段列表和规则同时写入 `meta.json.stable_fields`，在自动化校验或回归测试时使用。
@@ -166,24 +185,53 @@ onepass-ingest ingest data/raw --out-root out/batch --dry-run
 - `video_streams`：视频轨道列表（轻量字段：index/codec/width/height/r_frame_rate）。
 - `selected_audio_stream`：最终用于转码的音轨摘要，若未找到或指定无效则为 null。
 
-## manifest.jsonl（R7）
+## manifest.jsonl（R8）
 - 目录模式下，`--out-root` 下生成 `manifest.jsonl`；dry-run 模式写入 `manifest.plan.jsonl`（schema_version=`manifest.plan.v1`，status 固定为 planned，不落盘 workdir）。
 - 每行一条 JSON，不包裹数组，UTF-8 换行分隔，schema_version 固定为 `manifest.v1` 或 `manifest.plan.v1`。
 - 关键字段：
   - `input`: `{path, relpath, ext, size_bytes}`
-  - `output`: `{workdir, audio_wav, meta_json, convert_log}`
+  - `output`: `{workdir, audio_wav, meta_json, convert_log, work_id, work_key}`
   - `status`: `success` | `failed` | `planned`，`exit_code` 保留单文件退出码。
-  - `error_codes` & `errors_summary`: 提取自 meta.errors 或内部错误。
+  - `error_codes`: 数组，错误码列表（如 `["convert_failed", "probe_failed"]`）。
+  - `error_messages`: 数组，简短错误消息列表（每条最多 200 字符）。
+  - `warning_codes`: 数组，警告码列表（R8 新增）。
+  - `warning_messages`: 数组，简短警告消息列表（R8 新增）。
+  - `errors_summary`: 字符串，所有错误消息的摘要（分号分隔）。
+  - `meta_json_path`: 字符串或 null，meta.json 的绝对路径（若存在，R8 新增）。
+  - `log_file`: 字符串或 null，全局日志文件路径（可选，R8 新增）。
   - `started_at` / `ended_at` / `duration_ms`: 处理时间戳。
   - `params_digest`: 将 IngestParams 排序序列化后的 sha256，用于复现对比。
 - 样例：
-  - `{"schema_version":"manifest.v1","input":{"relpath":"a.mp3",...},"output":{"workdir":"out/batch/a__1ab2c3d4e5f6",...},"status":"success","exit_code":0,...}`
-  - `{"schema_version":"manifest.v1","input":{"relpath":"bad.mp3",...},"status":"failed","exit_code":20,"error_codes":["convert_failed"],...}`
+  - `{"schema_version":"manifest.v1","input":{"relpath":"a.mp3",...},"output":{"workdir":"out/batch/a__1ab2c3d4e5f6",...},"status":"success","exit_code":0,"error_codes":[],"error_messages":[],"warning_codes":[],"warning_messages":[],...}`
+  - `{"schema_version":"manifest.v1","input":{"relpath":"bad.mp3",...},"status":"failed","exit_code":21,"error_codes":["convert_failed"],"error_messages":["ffmpeg conversion failed (code=1)"],...}`
   - `{"schema_version":"manifest.plan.v1","input":{"relpath":"a.wav",...},"status":"planned","exit_code":null,...}`
 
+## 日志体系（R8）
+
+### Console 日志
+- 默认级别：INFO
+- `--verbose`：提升到 DEBUG 级别
+- 格式：`%(asctime)s [%(levelname)s] %(name)s: %(message)s`
+
+### 文件日志
+- `--log-file <path>`：指定全局日志文件路径
+- 批处理模式：若不指定 `--log-file`，默认写入 `<out-root>/ingest.log`
+- 文件日志级别：始终为 DEBUG（包含所有信息）
+- 格式：与 console 相同
+
+### convert.log
+- 每个 workdir 一份，记录该文件的 ffmpeg 命令与 stderr/stdout
+- 位置：`<workdir>/convert.log`
+- 用途：用于调试单个文件的转换问题
+
+### ingest.log（批处理）
+- 全局日志文件，记录整个批处理过程的日志
+- 位置：`<out-root>/ingest.log`（默认）或 `--log-file` 指定
+- 用途：用于追踪批处理整体进度和错误
+
 ## 开发规范
-- 日志：使用标准库 `logging`，统一入口在 `onepass_audioclean_ingest.logging_utils.get_logger`，后续补充格式与级别配置。
-- 错误码：`check-deps` 根据依赖状态返回 0/2/3/4；`ingest` 返回 R4 定义的退出码（见下文），失败也尽量写出 meta.json。
+- 日志：使用标准库 `logging`，统一入口在 `onepass_audioclean_ingest.logging_utils.setup_logging` 和 `get_logger`。
+- 错误码：统一使用 `errors.ErrorCode` 和 `errors.ExitCode`，全仓库保持一致。
 - Schema：meta.json v1 的 schema 固化在 `schemas/meta.v1.schema.json`，CLI 可使用该文件进行验证或回归测试。
 
 ## 输出结构
@@ -201,19 +249,70 @@ onepass-ingest ingest data/raw --out-root out/batch --dry-run
 - convert.log 记录完整命令与 stderr，方便复现与对比。
 - 目录批处理的 workdir 命名依赖 `relpath + size_bytes` 的 sha256 哈希；在同一输入根目录下重复执行可稳定复现输出路径，跨目录移动会改变哈希以避免覆盖。
 
-## 退出码
+## 错误码与退出码（R8）
 
-| 代码 | 说明 |
+### 错误码（ErrorCode，字符串常量）
+
+| 错误码 | 说明 |
 | --- | --- |
-| 0 | 成功 |
-| 2 | 依赖缺失或不可运行（ffmpeg/ffprobe） |
-| 10 | 输入不存在或不可读取 |
-| 12 | 无可用音频流（视频无音轨） |
-| 13 | 音轨选择无效（指定的 index/language 不存在） |
-| 11 | 输出目录不可写或存在冲突且未指定 `--overwrite` |
-| 20 | ffmpeg 转换失败 |
-| 21 | 输出 ffprobe 失败（转换已完成） |
-| 30 | 参数无效（如 bit depth 非 16） |
+| `deps_missing` | 依赖缺失（ffmpeg/ffprobe 未找到） |
+| `deps_broken` | 依赖损坏（ffmpeg/ffprobe 无法运行） |
+| `deps_insufficient` | 依赖能力不足（缺少必需的编码器/解码器） |
+| `input_not_found` | 输入文件不存在 |
+| `input_invalid` | 输入文件无效 |
+| `input_unsupported` | 输入格式不支持 |
+| `output_not_writable` | 输出目录不可写 |
+| `overwrite_conflict` | 输出已存在且未指定 `--overwrite` |
+| `invalid_params` | 参数无效（如 bit depth 非 16） |
+| `probe_failed` | ffprobe 探测失败 |
+| `convert_failed` | ffmpeg 转换失败 |
+| `no_audio_stream` | 无可用音频流（视频无音轨） |
+| `invalid_stream_selection` | 音轨选择无效（指定的 index/language 不存在） |
+| `internal_error` | 内部错误（未预期的异常） |
+
+### 退出码（ExitCode，整数）
+
+| 退出码 | 说明 | 适用场景 |
+| --- | --- | --- |
+| 0 | 成功 | 全部成功 |
+| 1 | 部分失败（批处理）或一般失败（单文件） | 批处理存在失败文件；单文件处理失败 |
+| 2 | 依赖缺失 | ffmpeg/ffprobe 缺失或不可用 |
+| 10 | 输入不存在 | 输入文件不存在 |
+| 11 | 输出不可写 | 输出目录不可写 |
+| 12 | 覆盖冲突 | 输出已存在且未指定 `--overwrite` |
+| 13 | 参数无效 | 参数值不合法（如 bit depth 非 16） |
+| 20 | 探测失败 | ffprobe 失败且无法继续（仅当必需时） |
+| 21 | 转换失败 | ffmpeg 转换失败 |
+| 22 | 无音频流或音轨选择无效 | 视频无音轨或指定音轨不存在 |
+| 99 | 内部错误 | 未预期的异常 |
+
+### 退出码兼容性说明（R4-R7 迁移）
+
+R8 对部分退出码进行了调整以保持一致性：
+
+- `NO_SUPPORTED_STREAM`：从 12 调整为 22
+- `INVALID_STREAM_SELECTION`：从 13 调整为 22（与 no_audio_stream 合并）
+- `CONVERT_FAILED`：从 20 调整为 21
+- `PROBE_FAILED`：保持 20（仅当必需且无法继续时）
+- `INVALID_PARAMS`：从 30 调整为 13
+- `OVERWRITE_CONFLICT`：新增 12（之前为 11 的一部分）
+
+## 批处理失败策略（R8）
+
+### continue-on-error（默认）
+- 遇到失败时继续处理后续文件
+- 每个文件的处理结果都写入 manifest.jsonl
+- 最终退出码：0（全部成功）或 1（存在失败）
+
+### fail-fast
+- 遇到第一个失败立即停止
+- 已处理的文件结果仍写入 manifest.jsonl
+- 退出码：1
+
+### 批处理退出码规则
+- 0：全部成功
+- 1：存在失败（部分或全部失败）
+- 2：依赖缺失（批处理开始前检查，直接退出）
 
 ## 路线图（摘要）
 - R3：meta.json schema v1、稳定字段与 probe 逻辑、`meta` 子命令。
@@ -232,5 +331,7 @@ onepass-ingest ingest <some_input> --out out/norm_on --normalize
 onepass-ingest ingest <some_input> --out out/dry_single --dry-run
 onepass-ingest ingest <input_dir> --out-root out/dry_batch --dry-run
 onepass-ingest ingest <input_dir> --out-root out/batch_demo
+cat out/batch_demo/manifest.jsonl | head
+ls out/batch_demo/ingest.log
 pytest -q
 ```

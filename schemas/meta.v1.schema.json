@@ -17,6 +17,7 @@
     "execution",
     "integrity",
     "errors",
+    "warnings",
     "stable_fields"
   ],
   "properties": {
@@ -267,6 +268,11 @@
     "errors": {
       "type": "array",
       "items": {"$ref": "#/$defs/errorObject"}
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/errorObject"},
+      "description": "Warnings that do not prevent processing but indicate potential issues"
     },
     "stable_fields": {
       "type": "object",

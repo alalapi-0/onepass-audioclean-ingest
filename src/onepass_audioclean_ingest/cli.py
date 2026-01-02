@@ -10,10 +10,10 @@ import typer
 
 from .batch import BatchOptions, run_batch, compute_work_id
 from .config import ConfigError
-from .constants import DEFAULT_MANIFEST_NAME, DEFAULT_META_FILENAME, INGEST_EXIT_CODES, SUPPORTED_MEDIA_EXTENSIONS
+from .constants import DEFAULT_INGEST_LOG_NAME, DEFAULT_MANIFEST_NAME, DEFAULT_META_FILENAME, INGEST_EXIT_CODES, SUPPORTED_MEDIA_EXTENSIONS
 from .deps import check_deps, determine_exit_code
 from .ingest_core import ingest_one
-from .logging_utils import get_logger
+from .logging_utils import get_logger, setup_logging
 from .params import IngestParams, load_config_params, load_default_params, merge_params
 from .meta import MetaError, build_meta, write_meta
 from .probe import ffprobe_input
@@ -27,8 +27,11 @@ def check_deps_command(
     config: Optional[str] = typer.Option(None, help="Path to config file"),
     json_output: bool = typer.Option(False, "--json", help="Output report as JSON"),
     verbose: bool = typer.Option(False, "--verbose", help="Show verbose details"),
+    log_file: Optional[str] = typer.Option(None, "--log-file", help="Path to log file"),
 ) -> None:
     """Check local dependencies (ffmpeg/ffprobe)."""
+
+    setup_logging(verbose=verbose, log_file=Path(log_file) if log_file else None)
 
     if config:
         logger.debug("Config path provided but unused in check-deps: %s", config)
@@ -105,6 +108,8 @@ def ingest(
     manifest_name: str = typer.Option(DEFAULT_MANIFEST_NAME, "--manifest-name", help="Manifest filename for batch mode"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Plan batch outputs without converting"),
     json_output: bool = typer.Option(False, "--json", help="Print meta.json content (single file)"),
+    verbose: bool = typer.Option(False, "--verbose", help="Enable verbose (DEBUG) logging"),
+    log_file: Optional[str] = typer.Option(None, "--log-file", help="Path to global log file (batch mode defaults to <out-root>/ingest.log)"),
 ) -> None:
     """Ingest a single file or a directory of media."""
 
@@ -114,6 +119,16 @@ def ingest(
 
     input_path_obj = Path(input_path)
     is_dir_mode = input_path_obj.is_dir() or out_root is not None
+
+    # Setup logging: determine log file path
+    log_file_path: Optional[Path] = None
+    if log_file:
+        log_file_path = Path(log_file)
+    elif is_dir_mode and out_root:
+        # Default log file for batch mode
+        log_file_path = Path(out_root) / DEFAULT_INGEST_LOG_NAME
+
+    setup_logging(verbose=verbose, log_file=log_file_path)
 
     try:
         default_params, _default_sources = load_default_params()
@@ -164,6 +179,7 @@ def ingest(
             continue_on_error=continue_on_error,
             manifest_name=manifest_name,
             dry_run=dry_run,
+            log_file=log_file_path,
         )
         result = run_batch(input_path_obj, Path(out_root), options)
         raise typer.Exit(code=result.exit_code)
@@ -206,8 +222,12 @@ def meta(
     out: str = typer.Option(..., "--out", help="Workdir for meta.json"),
     config: Optional[str] = typer.Option(None, help="Path to config file"),
     json_output: bool = typer.Option(False, "--json", help="Print meta.json content"),
+    verbose: bool = typer.Option(False, "--verbose", help="Enable verbose (DEBUG) logging"),
+    log_file: Optional[str] = typer.Option(None, "--log-file", help="Path to log file"),
 ) -> None:
     """Generate meta.json without performing conversion."""
+
+    setup_logging(verbose=verbose, log_file=Path(log_file) if log_file else None)
 
     try:
         default_params, _default_sources = load_default_params()
